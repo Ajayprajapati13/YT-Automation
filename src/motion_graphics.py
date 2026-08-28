@@ -154,6 +154,35 @@ def draw_text_centered(draw, text, cx, cy, size, color, alpha=1.0, bold=False):
     draw_text(draw, (cx, cy), text, size, color, alpha=alpha, bold=bold, anchor="mm")
 
 
+def text_reveal(layer_image, text, cx, cy, size, color, progress, alpha=1.0, bold=True):
+    """Animated title: text wipes in left-to-right instead of popping/
+    fading as a static block. `layer_image` is the RGBA Image the caller
+    is compositing onto (not an ImageDraw) since this pastes a cropped
+    slice rather than just drawing."""
+    progress = clamp01(progress)
+    if progress <= 0.001 or alpha <= 0.001:
+        return
+
+    f = font(size, bold)
+    tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    box = tmp_draw.textbbox((0, 0), text, font=f)
+    tw, th = box[2] - box[0], box[3] - box[1]
+
+    pad = 4
+    text_layer = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(text_layer, "RGBA")
+    d.text((pad - box[0], pad - box[1]), text, font=f, fill=rgba(color, alpha))
+
+    reveal_w = max(0, int((tw + pad * 2) * progress))
+    if reveal_w <= 0:
+        return
+
+    revealed = text_layer.crop((0, 0, reveal_w, text_layer.height))
+    x = int(cx - tw / 2 - pad)
+    y = int(cy - th / 2 - pad)
+    layer_image.alpha_composite(revealed, (x, y))
+
+
 def draw_arrow(draw, start, end, progress=1.0, color=(120, 180, 255), width=6, alpha=1.0):
     progress = clamp01(progress)
     if progress <= 0.001 or alpha <= 0.001:
@@ -400,6 +429,35 @@ $synth.Dispose()
         raise RuntimeError("Narration WAV was not created or is empty.")
 
     return output_path
+
+
+class Camera:
+    """Deliberate push/pan applied to specific world-space coordinates
+    before drawing, rather than an image-space crop after the fact.
+
+    Unlike apply_zoom() (which scales/crops the whole finished frame,
+    risking clipping anything positioned near an edge), a Camera is
+    applied selectively per element: pass diagram coordinates through
+    cam.xy()/cam.wh(), and simply don't pass character coordinates
+    through it, so the character never moves/clips due to camera work
+    it wasn't opted into -- true object-level motion.
+    """
+
+    def __init__(self, anchor=(960, 540), scale=1.0):
+        self.anchor = anchor
+        self.scale = scale
+
+    def xy(self, x, y):
+        ax, ay = self.anchor
+        return (ax + (x - ax) * self.scale, ay + (y - ay) * self.scale)
+
+    def wh(self, v):
+        return v * self.scale
+
+    def box(self, x0, y0, x1, y1):
+        nx0, ny0 = self.xy(x0, y0)
+        nx1, ny1 = self.xy(x1, y1)
+        return (nx0, ny0, nx1, ny1)
 
 
 def apply_zoom(image, zoom, focus=(0.5, 0.5)):
