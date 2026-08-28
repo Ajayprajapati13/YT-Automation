@@ -14,19 +14,6 @@
       "Edit(./SUPERVISOR/NEXT_TASK.md)",
       "Write(./SUPERVISOR/PROTOCOL.md)",
       "Write(./SUPERVISOR/NEXT_TASK.md)"
-    ],
-    "ask": [
-      "Bash(git push *)",
-      "Bash(npm install *)",
-      "Bash(pnpm install *)",
-      "Bash(yarn add *)",
-      "Bash(pip install *)",
-      "Bash(az *)",
-      "Bash(aws *)",
-      "Bash(gcloud *)",
-      "Bash(kubectl *)",
-      "Bash(terraform *)",
-      "Bash(docker *)"
     ]
   },
   "hooks": {
