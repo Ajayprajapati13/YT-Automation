@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_supervisor.py\" pretool",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/local_pretool.py\"",
             "timeout": 25,
             "statusMessage": "Supervisor security review"
           }
