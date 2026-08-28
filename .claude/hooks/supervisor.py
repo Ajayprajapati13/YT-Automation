@@ -2,7 +2,7 @@
 """Claude Code supervisor bridge.
 
 pretool: deterministic policy + OpenAI review before a tool executes.
-posttool: review the result and either give corrective guidance or stop.
+posttool: review the result and inject corrective guidance when needed.
 stop: fetch the supervisor task from origin/main and continue when work remains.
 
 Local policy is authoritative. Reviewer failure never auto-allows.
@@ -61,11 +61,14 @@ def pre_output(decision, reason):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
         "permissionDecision": decision, "permissionDecisionReason": reason[:1000]}}))
 
-def block_output(reason, continue_work=False):
-    obj = {"decision": "block", "reason": reason[:1000]}
-    if continue_work:
-        obj["continue"] = True
-    print(json.dumps(obj))
+def post_context(reason):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": "Supervisor review: " + reason[:2000]
+    }}))
+
+def stop_output(reason):
+    print(json.dumps({"decision": "block", "reason": reason[:1000]}))
 
 def context_text(path, limit=7000):
     try: return path.read_text(encoding="utf-8", errors="replace")[:limit]
@@ -102,6 +105,21 @@ def local_pre(tool, tool_input):
         if re.search(p, data, re.I): return "ask", "This operation requires explicit human approval."
     return None, None
 
+def extract_json(raw):
+    text = raw.get("output_text")
+    if not text:
+        chunks = []
+        for item in raw.get("output", []):
+            for content in item.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    chunks.append(content["text"])
+        text = "".join(chunks)
+    if not text: raise ValueError("Reviewer returned no text")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Reviewer returned invalid structured output at position {exc.pos}") from exc
+
 def reviewer(mode, payload):
     task = context_text(ROOT / TASK_PATH)
     architecture = context_text(ROOT / "ARCHITECTURE.md")
@@ -114,20 +132,15 @@ def reviewer(mode, payload):
             {"role": "user", "content": [{"type": "input_text", "text": json.dumps(context, ensure_ascii=False)}]},
         ],
         "text": {"format": {"type": "json_schema", "name": "supervisor_decision", "strict": True, "schema": SCHEMA}},
-        "max_output_tokens": 180,
+        "max_output_tokens": 800,
     }).encode()
     req = urllib.request.Request(API_URL, data=body,
         headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as response: raw = json.loads(response.read().decode())
-    text = raw.get("output_text")
-    if not text:
-        for item in raw.get("output", []):
-            for content in item.get("content", []):
-                if isinstance(content, dict) and content.get("text"):
-                    text = content["text"]; break
-            if text: break
-    if not text: raise ValueError("Reviewer returned no text")
-    result = json.loads(text)
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+        raw = json.loads(response.read().decode())
+    result = extract_json(raw)
+    if not isinstance(result, dict) or not {"decision", "risk", "reason"}.issubset(result):
+        raise ValueError("Reviewer structured output is missing required fields")
     if result["risk"] != "low" and mode == "pretool": result["decision"] = "deny"
     return result
 
@@ -153,11 +166,14 @@ def posttool(payload):
             "tool_input": sanitize(payload.get("tool_input", {})),
             "tool_response": redact(payload.get("tool_response", ""))})
         if r["decision"] == "stop" or r["risk"] in {"high", "critical"}:
-            block_output("Supervisor stopped after result review: " + r["reason"])
+            print(json.dumps({"continue": False, "stopReason": "Supervisor stopped after result review: " + r["reason"][:800]}))
         elif r["decision"] in {"modify", "deny"} or r["risk"] != "low":
-            block_output("Supervisor corrective guidance: " + r["reason"], continue_work=True)
+            post_context("The action needs correction before the task is considered complete. " + r["reason"])
+        else:
+            post_context("Result reviewed as low risk and consistent with the current task. " + r["reason"])
     except Exception as exc:
         sys.stderr.write(f"supervisor posttool error: {type(exc).__name__}: {exc}\n")
+        post_context("Supervisor result review was unavailable. Treat the result as unverified and validate it before proceeding.")
 
 def fetch_task():
     try:
@@ -186,20 +202,19 @@ def stop(payload):
     if not API_KEY:
         status = re.search(r"\*\*Status:\*\*\s*(\w+)", task, re.I)
         if status and status.group(1).upper() == "READY":
-            block_output("Supervisor task is still READY. Continue the task before stopping.")
+            stop_output("Supervisor task is still READY. Continue the task before stopping.")
         return
     try:
         r = reviewer("stop", {"last_assistant_message": redact(payload.get("last_assistant_message", "")),
                                "task_snapshot": task})
         if r["decision"] in {"deny", "modify", "stop"} or r["risk"] != "low":
-            block_output("Supervisor requires more work: " + r["reason"])
+            stop_output("Supervisor requires more work: " + r["reason"])
             return
         notify(r["reason"])
     except Exception as exc:
         sys.stderr.write(f"supervisor stop error: {type(exc).__name__}: {exc}\n")
-        # Fail closed if a READY task exists; otherwise allow the normal stop.
         if "**Status:** READY" in task:
-            block_output("Supervisor unavailable and task is still READY; continue validation.")
+            stop_output("Supervisor unavailable and task is still READY; continue validation.")
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
