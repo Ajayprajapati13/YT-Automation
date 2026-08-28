@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/supervisor.py\" pretool",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_supervisor.py\" pretool",
             "timeout": 25,
             "statusMessage": "Supervisor security review"
           }
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/supervisor.py\" posttool",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_supervisor.py\" posttool",
             "timeout": 25
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/supervisor.py\" stop",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/run_supervisor.py\" stop",
             "timeout": 30
           }
         ]
