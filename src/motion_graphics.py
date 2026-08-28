@@ -6,7 +6,7 @@ MP4 — no intermediate PNG sequence, no static-slide zoompan tricks.
 """
 
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 import subprocess
 import math
 
@@ -293,6 +293,41 @@ def render_video(draw_frame, duration, output_path, ffmpeg=None, fps=FPS,
         raise RuntimeError(f"FFmpeg failed:\n{stderr.decode(errors='ignore')}")
 
     return output_path
+
+
+def parallax_crop(wide_image, t, width=WIDTH, height=HEIGHT, amplitude=70.0, period=22.0):
+    """Slow side-to-side drift across a wider background for a depth cue
+    that's independent of any foreground camera zoom/pan."""
+    iw, ih = wide_image.size
+    max_offset = max(0, iw - width)
+    amp = min(amplitude, max_offset / 2)
+    center = max_offset / 2
+    offset = center + amp * math.sin(2 * math.pi * t / period)
+    offset = max(0, min(max_offset, offset))
+    left = int(round(offset))
+    top = max(0, (ih - height) // 2)
+    return wide_image.crop((left, top, left + width, top + height))
+
+
+def glow_composite(base_rgb, draw_glow_fn, blur_radius=18, downsample=3):
+    """Cheap cinematic bloom: draw bright glow-source shapes at reduced
+    resolution, blur them, then screen-blend onto the full-res frame.
+
+    draw_glow_fn(draw, scale) draws onto a `scale`-sized (1/downsample)
+    transparent layer — multiply coordinates by `scale` when drawing.
+    """
+    width, height = base_rgb.size
+    sw = max(1, width // downsample)
+    sh = max(1, height // downsample)
+
+    small = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(small, "RGBA")
+    draw_glow_fn(draw, 1.0 / downsample)
+
+    small = small.filter(ImageFilter.GaussianBlur(max(1.0, blur_radius / downsample)))
+    big = small.resize((width, height), Image.BILINEAR).convert("RGB")
+
+    return ImageChops.screen(base_rgb, big)
 
 
 def apply_zoom(image, zoom, focus=(0.5, 0.5)):

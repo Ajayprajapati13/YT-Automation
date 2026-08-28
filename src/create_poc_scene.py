@@ -1,8 +1,12 @@
-"""Milestone 1 proof-of-concept: 'Why AI Companies Need So Many GPUs'.
+"""Explainer scene: 'Why AI Companies Need So Many GPUs'.
 
 Builds a single continuous 28s animated explainer scene using the
 motion_graphics engine (no static-slide slideshow). Output:
-    C:\\YT-Automation\\output\\gpu_motion_poc.mp4
+    C:\\YT-Automation\\output\\gpu_motion_v2.mp4
+
+Milestone 2 adds cinematic depth on top of the milestone-1 architecture
+(reused as-is): a parallax background layer, a soft node/glow bloom
+pass, and lower-third caption cards for typographic hierarchy.
 """
 
 from pathlib import Path
@@ -14,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import motion_graphics as mg
 
 BASE_DIR = Path(r"C:\YT-Automation")
-OUTPUT_FILE = BASE_DIR / "output" / "gpu_motion_poc.mp4"
+OUTPUT_FILE = BASE_DIR / "output" / "gpu_motion_v2.mp4"
 
 DURATION = 28.0
 
@@ -25,7 +29,8 @@ AMBER = (255, 200, 120)
 WHITE = (255, 255, 255)
 DIM_TEXT = (170, 190, 215)
 
-BACKGROUND = mg.build_background()
+PARALLAX_MARGIN = 220
+BACKGROUND_WIDE = mg.build_background(width=mg.WIDTH + PARALLAX_MARGIN, height=mg.HEIGHT)
 
 # ------------------------------------------------------------------
 # Layout
@@ -147,6 +152,24 @@ def pipeline_arrow(draw, start, end, t, grow_start, grow_end, alpha=1.0,
                            dot_color, radius=5, alpha=alpha * 0.9)
 
 
+def caption(draw, text, alpha):
+    """Lower-third style caption: soft card behind bold centered text."""
+    if alpha <= 0.001:
+        return
+
+    size = 44
+    cx, cy = mg.WIDTH / 2, 130
+    tw, th = mg.text_size(draw, text, size, bold=True)
+    pad_x, pad_y = 34, 20
+
+    box = (cx - tw / 2 - pad_x, cy - th / 2 - pad_y,
+           cx + tw / 2 + pad_x, cy + th / 2 + pad_y)
+
+    mg.draw_rounded_rect(draw, box, 14, fill=(8, 14, 24), alpha=alpha * 0.55)
+    mg.draw_rounded_rect(draw, box, 14, outline=BLUE, width=2, alpha=alpha * 0.5)
+    mg.draw_text_centered(draw, text, cx, cy, size, WHITE, alpha=alpha, bold=True)
+
+
 def task_token(draw, start, end, t, spawn_time, duration=0.5, color=AMBER, alpha=1.0):
     if t < spawn_time or t > spawn_time + duration:
         return
@@ -186,7 +209,7 @@ def compute_zoom(t):
 # Frame drawing
 # ------------------------------------------------------------------
 
-def draw_pipeline(draw, t):
+def draw_pipeline(draw, t, glow):
     dim = scene_dim(t)
 
     # --- Request node ---
@@ -200,11 +223,9 @@ def draw_pipeline(draw, t):
         mg.draw_rounded_rect(draw, box, 16, outline=BLUE, width=4, alpha=req_alpha)
         mg.draw_text_centered(draw, "REQUEST", rx, ry - 20, 30, WHITE, alpha=req_alpha, bold=True)
         mg.draw_dot(draw, (rx, ry + 28), 10, AMBER, alpha=req_alpha)
+        glow.append(("rect", box, 16, BLUE, req_alpha * 0.5))
 
-    mg.draw_text_centered(
-        draw, CAPTION_1_TEXT, mg.WIDTH / 2, 130, 44, WHITE,
-        alpha=mg.fade_window(t, *CAPTION_1) * dim, bold=True,
-    )
+    caption(draw, CAPTION_1_TEXT, mg.fade_window(t, *CAPTION_1) * dim)
 
     # --- Request -> Model arrow ---
     req_edge = (REQUEST_CENTER[0] + REQUEST_SIZE[0] / 2 + 10, REQUEST_CENTER[1])
@@ -222,26 +243,12 @@ def draw_pipeline(draw, t):
         mg.draw_rounded_rect(draw, box, 22, outline=BLUE_BRIGHT, width=6, alpha=model_alpha)
         mg.draw_text_centered(draw, "AI", cx, cy - 30, 60, WHITE, alpha=model_alpha, bold=True)
         mg.draw_text_centered(draw, "MODEL", cx, cy + 30, 34, DIM_TEXT, alpha=model_alpha, bold=True)
+        glow.append(("rect", box, 22, BLUE_BRIGHT, model_alpha * 0.55))
 
-    mg.draw_text_centered(
-        draw, CAPTION_2_TEXT, mg.WIDTH / 2, 130, 44, WHITE,
-        alpha=mg.fade_window(t, *CAPTION_2) * dim, bold=True,
-    )
-
-    mg.draw_text_centered(
-        draw, CAPTION_3_TEXT, mg.WIDTH / 2, 130, 44, WHITE,
-        alpha=mg.fade_window(t, *CAPTION_3) * dim, bold=True,
-    )
-
-    mg.draw_text_centered(
-        draw, CAPTION_4_TEXT, mg.WIDTH / 2, 130, 44, WHITE,
-        alpha=mg.fade_window(t, *CAPTION_4) * dim, bold=True,
-    )
-
-    mg.draw_text_centered(
-        draw, CAPTION_5_TEXT, mg.WIDTH / 2, 130, 44, WHITE,
-        alpha=mg.fade_window(t, *CAPTION_5) * dim, bold=True,
-    )
+    caption(draw, CAPTION_2_TEXT, mg.fade_window(t, *CAPTION_2) * dim)
+    caption(draw, CAPTION_3_TEXT, mg.fade_window(t, *CAPTION_3) * dim)
+    caption(draw, CAPTION_4_TEXT, mg.fade_window(t, *CAPTION_4) * dim)
+    caption(draw, CAPTION_5_TEXT, mg.fade_window(t, *CAPTION_5) * dim)
 
     # --- Model -> GPUs (chained per row so lines never cross a box) ---
     model_right_edge = (MODEL_CENTER[0] + MODEL_SIZE[0] / 2 + 10, MODEL_CENTER[1])
@@ -272,11 +279,15 @@ def draw_pipeline(draw, t):
 
         if box_alpha > 0.001:
             box_scale = mg.lerp(0.5, 1.0, box_progress)
+            sw, sh = gw * box_scale, gh * box_scale
             gpu_box(
-                draw, cx, cy, gw * box_scale, gh * box_scale,
+                draw, cx, cy, sw, sh,
                 f"GPU {i + 1}", box_alpha, t,
                 processing_since=appear_end, color=BLUE,
             )
+            pulse_avg = mg.pulse((t - appear_end) * 1.3, 1.6) if t >= appear_end else 0.0
+            gbox = (cx - sw / 2, cy - sh / 2, cx + sw / 2, cy + sh / 2)
+            glow.append(("rect", gbox, 16, BLUE, box_alpha * (0.18 + 0.20 * pulse_avg)))
 
     # --- Cluster interconnects ---
     connector_alpha = mg.fade_window(t, *CONNECTORS_IN) * dim * 0.5
@@ -299,6 +310,18 @@ def draw_pipeline(draw, t):
 
 
 def draw_final_statement(rgb_image, t):
+    progress = mg.ease_out_back(mg.window(t, *FINAL_TEXT_WINDOW))
+    alpha = mg.fade_window(t, *FINAL_TEXT_WINDOW)
+
+    if alpha > 0.001:
+        def glow_fn(d, s):
+            cx, cy = mg.WIDTH / 2, mg.HEIGHT / 2
+            d.ellipse(
+                ((cx - 380) * s, (cy - 120) * s, (cx + 380) * s, (cy + 120) * s),
+                fill=mg.rgba(BLUE_BRIGHT, alpha * 0.16),
+            )
+        rgb_image = mg.glow_composite(rgb_image, glow_fn, blur_radius=40, downsample=4)
+
     rgba_image = rgb_image.convert("RGBA")
     layer = Image.new("RGBA", rgba_image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer, "RGBA")
@@ -306,9 +329,6 @@ def draw_final_statement(rgb_image, t):
     dim_alpha = mg.fade_window(t, *DIM_WINDOW) * 0.55
     if dim_alpha > 0.001:
         draw.rectangle((0, 0, mg.WIDTH, mg.HEIGHT), fill=mg.rgba((0, 0, 0), dim_alpha))
-
-    progress = mg.ease_out_back(mg.window(t, *FINAL_TEXT_WINDOW))
-    alpha = mg.fade_window(t, *FINAL_TEXT_WINDOW)
 
     if alpha > 0.001:
         scale = mg.lerp(0.85, 1.0, progress)
@@ -337,14 +357,28 @@ def draw_final_statement(rgb_image, t):
 
 
 def draw_frame(t, frame_index, total_frames):
-    base = BACKGROUND.copy().convert("RGBA")
+    base = mg.parallax_crop(BACKGROUND_WIDE, t, mg.WIDTH, mg.HEIGHT).convert("RGBA")
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer, "RGBA")
 
-    draw_pipeline(draw, t)
+    glow_sources = []
+    draw_pipeline(draw, t, glow_sources)
 
     composed = Image.alpha_composite(base, layer)
     rgb = composed.convert("RGB")
+
+    if t < 23.6 and glow_sources:
+        def glow_fn(d, s):
+            for kind, box, radius, color, a in glow_sources:
+                if a <= 0.001:
+                    continue
+                x0, y0, x1, y1 = box
+                width = max(1, round(14 * s))
+                d.rounded_rectangle(
+                    (x0 * s, y0 * s, x1 * s, y1 * s), radius=radius * s,
+                    outline=mg.rgba(color, min(1.0, a)), width=width,
+                )
+        rgb = mg.glow_composite(rgb, glow_fn, blur_radius=14, downsample=3)
 
     zoom = compute_zoom(t)
     rgb = mg.apply_zoom(rgb, zoom, focus=(0.56, 0.46))
