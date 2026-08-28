@@ -1,0 +1,11 @@
+Every modern AI system runs on a surprising amount of computing hardware behind the scenes. Let's break down why GPUs sit at the center of it all.
+
+A GPU is a processor built to run thousands of small calculations at exactly the same time, instead of one after another.
+
+A CPU handles a handful of complex tasks very efficiently. A GPU trades that for massive parallelism across many simpler cores.
+
+Inside a GPU, thousands of compute cores work alongside fast local memory, constantly moving data back and forth to stay busy.
+
+Modern AI models split their workload across many GPUs at once, so millions of requests can be processed in parallel.
+
+That is why AI needs massive parallel computing power.
