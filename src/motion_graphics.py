@@ -112,6 +112,16 @@ def rgba(color, alpha=1.0):
     return (r, g, b, max(0, min(255, int(round(alpha * 255)))))
 
 
+def blend_toward(color, neutral, factor):
+    """Opaque RGB color that is `color` blended `factor` of the way from
+    `neutral` — used to pre-bake intensity for glow_composite(), whose
+    small canvas is opaque (no alpha) so blend modes stay correct."""
+    factor = clamp01(factor)
+    return tuple(
+        int(round(lerp(n, c, factor))) for c, n in zip(color[:3], neutral[:3])
+    )
+
+
 # ------------------------------------------------------------------
 # Drawing primitives (operate on an RGBA layer draw context)
 # ------------------------------------------------------------------
@@ -202,11 +212,13 @@ def traveling_dots(draw, start, end, t, period, count, color, radius=6, alpha=1.
 # Scene background
 # ------------------------------------------------------------------
 
-def build_background(width=WIDTH, height=HEIGHT):
-    """Dark technology gradient with a faint grid — precomputed once."""
-    image = Image.new("RGB", (width, height), (8, 12, 20))
-    top = (10, 15, 26)
-    bottom = (5, 8, 14)
+def build_background(width=WIDTH, height=HEIGHT, top=(10, 15, 26), bottom=(5, 8, 14),
+                      grid_color=(60, 90, 130, 22), grid_step=80,
+                      vignette_color=(0, 0, 0), vignette_strength=90):
+    """Gradient background with a faint grid and soft vignette —
+    precomputed once. Defaults match the original dark technology
+    theme; pass a light palette for a white/near-white variant."""
+    image = Image.new("RGB", (width, height), top)
 
     pixels = image.load()
     for y in range(height):
@@ -221,20 +233,18 @@ def build_background(width=WIDTH, height=HEIGHT):
 
     draw = ImageDraw.Draw(image, "RGBA")
 
-    grid_color = (60, 90, 130, 22)
-    step = 80
-    for x in range(0, width, step):
+    for x in range(0, width, grid_step):
         draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
-    for y in range(0, height, step):
+    for y in range(0, height, grid_step):
         draw.line([(0, y), (width, y)], fill=grid_color, width=1)
 
     # Vignette
     vignette = Image.new("L", (width, height), 0)
     vdraw = ImageDraw.Draw(vignette)
-    vdraw.ellipse((-width * 0.3, -height * 0.3, width * 1.3, height * 1.3), fill=90)
+    vdraw.ellipse((-width * 0.3, -height * 0.3, width * 1.3, height * 1.3), fill=vignette_strength)
     vdraw.ellipse((width * 0.15, height * 0.1, width * 0.85, height * 0.95), fill=0)
-    dark = Image.new("RGB", (width, height), (0, 0, 0))
-    image = Image.composite(dark, image, vignette)
+    shade = Image.new("RGB", (width, height), vignette_color)
+    image = Image.composite(shade, image, vignette)
 
     return image
 
@@ -309,25 +319,87 @@ def parallax_crop(wide_image, t, width=WIDTH, height=HEIGHT, amplitude=70.0, per
     return wide_image.crop((left, top, left + width, top + height))
 
 
-def glow_composite(base_rgb, draw_glow_fn, blur_radius=18, downsample=3):
-    """Cheap cinematic bloom: draw bright glow-source shapes at reduced
-    resolution, blur them, then screen-blend onto the full-res frame.
+def glow_composite(base_rgb, draw_glow_fn, blur_radius=18, downsample=3, blend="screen"):
+    """Cheap cinematic depth pass: draw glow/shadow-source shapes at
+    reduced resolution, blur them, then blend onto the full-res frame.
 
-    draw_glow_fn(draw, scale) draws onto a `scale`-sized (1/downsample)
-    transparent layer — multiply coordinates by `scale` when drawing.
+    blend="screen" brightens (bloom/rim-light — for dark themes).
+    blend="multiply" darkens (soft shadow — for light themes, where
+    screen-blending against near-white is invisible).
+
+    draw_glow_fn(draw, scale) draws OPAQUE shapes onto a `scale`-sized
+    (1/downsample) canvas pre-filled with the blend's neutral color —
+    multiply coordinates by `scale`, and use blend_toward() to bake
+    intensity into the fill color (no alpha channel here, so the blend
+    math stays correct: black is neutral for screen, white for multiply).
     """
     width, height = base_rgb.size
     sw = max(1, width // downsample)
     sh = max(1, height // downsample)
 
-    small = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(small, "RGBA")
+    neutral = (255, 255, 255) if blend == "multiply" else (0, 0, 0)
+
+    small = Image.new("RGB", (sw, sh), neutral)
+    draw = ImageDraw.Draw(small)
     draw_glow_fn(draw, 1.0 / downsample)
 
     small = small.filter(ImageFilter.GaussianBlur(max(1.0, blur_radius / downsample)))
-    big = small.resize((width, height), Image.BILINEAR).convert("RGB")
+    big = small.resize((width, height), Image.BILINEAR)
 
+    if blend == "multiply":
+        return ImageChops.multiply(base_rgb, big)
     return ImageChops.screen(base_rgb, big)
+
+
+# ------------------------------------------------------------------
+# Narration (reuses the project's existing Windows SAPI / System.Speech
+# pipeline — same mechanism as src/generate_voice.py, no new TTS
+# provider or API dependency).
+# ------------------------------------------------------------------
+
+def synthesize_narration(text, output_path, voice="Microsoft David Desktop", rate=0, volume=100):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    escaped = text.replace("'", "''")
+
+    powershell_script = f"""
+Add-Type -AssemblyName System.Speech
+
+$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+
+$synth.SelectVoice("{voice}")
+
+$synth.Rate = {rate}
+$synth.Volume = {volume}
+
+$text = @'
+{escaped}
+'@
+
+$synth.SetOutputToWaveFile(
+    "{output_path}"
+)
+
+$synth.Speak($text)
+
+$synth.Dispose()
+"""
+
+    command = [
+        "powershell.exe", "-NoProfile", "-NonInteractive",
+        "-ExecutionPolicy", "Bypass", "-Command", powershell_script,
+    ]
+
+    result = subprocess.run(command, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Narration synthesis failed:\n{result.stderr}")
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("Narration WAV was not created or is empty.")
+
+    return output_path
 
 
 def apply_zoom(image, zoom, focus=(0.5, 0.5)):

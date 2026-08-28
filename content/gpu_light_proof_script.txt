@@ -1,0 +1,5 @@
+Every AI request starts with compute. It travels into the AI model, which hands the work to a single GPU.
+
+But real AI workloads never stop at one processor. The task splits into many parallel jobs, spreading across a growing cluster of GPUs.
+
+They share data at high speed, working together as one system. This is why modern AI needs massive parallel computing power.
