@@ -1,0 +1,62 @@
+{
+  "task_id": "TASK-008",
+  "status": "COMPLETED",
+  "timestamp": "2026-08-28T11:46:04Z",
+  "summary": "Integrated the user-provided character reference sheet into a 6-beat, 51.2s character-led GPU explainer proof, built on top of TASK-007's storyboard. The reference sheet at assets/character/character_reference_sheet.png (1536x1024 PNG, renamed from the as-saved character_reference_sheet.png.png -- filename only, content untouched) reads visually as a flat moodboard, but its alpha channel is already cleanly pre-matted per pose: composited onto white before writing any extraction code, the result showed clean edges with no visible halo. Per the task's instruction #6, poses were cropped (not pretended to be separate production assets) from the five labeled top-row portraits (reference/introg/explaining/thinking/closing), trimmed to each portrait's alpha bounding box above its debug label badge. One pose ('reference') has a genuine, unfixable soft-edge artifact at its own extended-hand boundary -- confirmed by testing increasing crop trims, which made it worse (cut into increasingly opaque arm content) rather than better -- so it was excluded from the render per the quality gate rather than shipped with a visible flaw; the other four poses are clean and were used across the 6 beats (with 2 reused once each, spaced apart). Diagrams (single-GPU core grid, CPU-vs-GPU comparison, cores+memory data flow, mini data->GPU-cluster->AI-model pipeline) reuse create_poc_scene's THEME/glow/caption primitives via two new generalized helpers, not a new engine.",
+  "changed_files": [
+    "assets/character/character_reference_sheet.png",
+    "src/character_assets.py",
+    "src/create_character_proof.py",
+    "content/gpu_character_proof_script.txt"
+  ],
+  "validation": {
+    "command": "C:\\YT-Automation\\.venv\\Scripts\\python.exe src\\create_character_proof.py",
+    "output_file": "output/gpu_character_proof.mp4",
+    "ffprobe_video": {
+      "codec_name": "h264",
+      "width": 1920,
+      "height": 1080,
+      "pix_fmt": "yuv420p",
+      "r_frame_rate": "30/1",
+      "duration_seconds": 51.2
+    },
+    "ffprobe_audio": {
+      "codec_name": "aac",
+      "sample_rate": 22050,
+      "channels": 1,
+      "duration_seconds": 51.2
+    },
+    "narration_source_duration_seconds": 49.71,
+    "audio_video_duration_match": "exact (51.2s == 51.2s, audio apad-padded to video length)",
+    "file_size_bytes": 7644999,
+    "audio_sanity_check": {
+      "method": "ffmpeg volumedetect filter",
+      "n_samples": 1128960,
+      "mean_volume_db": -19.9,
+      "max_volume_db": -0.4,
+      "result": "PASS - non-silent, healthy speech level, no clipping"
+    },
+    "visual_inspection": {
+      "method": "frames extracted from the actual muxed MP4 via ffmpeg -ss at t=4,12,20,28,36,48s, viewed directly",
+      "character_consistency": "PASS - same character across all 5 used shots, only pose/scale/flip vary",
+      "white_background_present": true,
+      "typography_readable": true,
+      "diagram_contrast": "clear on all 4 diagram types (single GPU, CPU-vs-GPU, cores+memory, data/cluster/model pipeline)",
+      "clean_extraction": "PASS for 4 of 5 poses (introg, explaining, thinking, closing); 'reference' pose excluded, see summary",
+      "known_minor_artifact": "a few disconnected sub-pixel fragments near the left edge of some poses (adjacent-pose hand bleed across imprecise column boundaries in the source sheet) -- visible only on close inspection, does not affect the character's face/body/consistency",
+      "clipping_or_overlap": "none observed",
+      "excessive_glow": "none - glow restrained to a subtle rim on diagram boxes only, never applied to character pixels (composited after the glow pass specifically to guarantee this)"
+    },
+    "result": "PASS - all ffprobe, audio, and visual checks satisfied; one pose intentionally excluded per the quality gate rather than shipped flawed"
+  },
+  "commit_sha": "82b9ca86127084da08d1df5a8c9ffbf8839dda89",
+  "git_actions_performed": [
+    "staged assets/character/character_reference_sheet.png, src/character_assets.py, src/create_character_proof.py, content/gpu_character_proof_script.txt only",
+    "committed as 82b9ca8",
+    "pushed 82b9ca8 to origin/main (fast-forward, 7d1ec54..82b9ca8)",
+    "did not stage output/gpu_character_proof.mp4, output/gpu_character_proof_voice.wav, or temp/character_proof/ (all covered by existing .gitignore)",
+    "no application code (motion_graphics.py, create_poc_scene.py) was modified this task -- only new files",
+    "this status file will be committed and pushed separately as the final handoff commit"
+  ],
+  "next_action": "Per TASK-008's stop condition, halting here for review -- not starting the full 2-3 minute video or YouTube publishing. gpu_character_proof.mp4 is a 51.2s validated character-led proof, not the full video. Recommend review of the rendered file, in particular: (1) whether the 'reference' pose exclusion needs a replacement asset (a 6th pose) or is fine to leave as 4 usable poses, (2) whether to now converge the three parallel visual directions produced across TASK-005/006/008 (dark theme, light theme no character, light theme with character) into one final direction before any full-length build."
+}
