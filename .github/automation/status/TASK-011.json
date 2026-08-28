@@ -1,0 +1,80 @@
+{
+  "task_id": "TASK-011",
+  "status": "COMPLETED",
+  "timestamp": "2026-08-28T13:11:35Z",
+  "summary": "Built and rendered the first full production GPU/AI explainer video (2:52) on the TASK-010 scene engine, using the project's existing content/gpu_story.txt and content/gpu_story_scenes.json (9-scene structure, ~165s target) as the source of truth rather than inventing new claims -- adapted into per-scene narration segments in content/gpu_explainer_script.json. This closes the TASK-010 architectural gap: each of the 9 scenes (Hook, Why GPUs Matter, CPU vs GPU, Massive Parallelism, Memory + Bandwidth, GPU Clusters, Serving Millions of Requests, The Real Cost, Takeaway) synthesizes its own narration clip, and the whole video's timeline is derived from those 9 measured clip durations, not a hand-picked duration. The combined audio track uses ffmpeg adelay+amix (normalize disabled since clips never overlap) to place each clip at its scene's exact narration start time. 6 of the 9 scene diagrams reuse TASK-009's helpers (core_grid, hand_connector, Camera) directly; the other 3 (AI Model compute-heavy grid, GPU<->memory bandwidth flow, many-users-to-cluster inference visual) are new content built from the same primitives -- no new rendering engine code. Per TASK-011's explicit instruction, also tuned scene_engine.transition_sweep() (the TASK-010 regression review had flagged it as too dominant): half_width 0.35->0.18, strength 0.10->0.045; verified subtle on an actual scene boundary in the final render rather than assumed. All 4 canonical character poses (introg, explaining, thinking, closing) are used across the 9 scenes with appropriate variety; the 'reference' pose remains excluded per the known TASK-008/009 limitation.",
+  "changed_files": [
+    "src/scene_engine.py",
+    "src/create_gpu_explainer.py",
+    "content/gpu_explainer_script.json"
+  ],
+  "output_file": "output/gpu_explainer_final.mp4",
+  "validation": {
+    "command": "C:\\YT-Automation\\.venv\\Scripts\\python.exe src\\create_gpu_explainer.py",
+    "ffprobe_video": {
+      "codec_name": "h264",
+      "width": 1920,
+      "height": 1080,
+      "pix_fmt": "yuv420p",
+      "r_frame_rate": "30/1",
+      "duration_seconds": 172.4
+    },
+    "ffprobe_audio": {
+      "codec_name": "aac",
+      "sample_rate": 22050,
+      "channels": 1,
+      "duration_seconds": 172.4
+    },
+    "target_duration_range": "approximately 2-3 minutes (120-180s); actual 172.4s (2:52), narration-driven, not padded",
+    "audio_video_duration_match": "exact (172.4s == 172.4s)",
+    "file_size_bytes": 15635481,
+    "audio_sanity_check": {
+      "method": "ffmpeg volumedetect filter",
+      "n_samples": 3801420,
+      "mean_volume_db": -20.5,
+      "max_volume_db": -0.2,
+      "result": "PASS - non-silent throughout, healthy speech level, no clipping (peak below 0 dB)"
+    },
+    "silence_gap_check": {
+      "method": "ffmpeg silencedetect (noise=-40dB, min duration 1.0s)",
+      "result": "8 gaps of ~2.4s between the 9 scenes (consistent, matches the intentional LEAD_IN+TAIL pacing buffer) plus a ~3.5s closing hold after the takeaway line -- regular and intentional, not random/unintended dead air"
+    },
+    "per_scene_narration": {
+      "hook": "33 words -> 14.64s",
+      "why_gpus": "35 words -> 12.98s",
+      "cpu_vs_gpu": "40 words -> 15.86s",
+      "parallelism": "35 words -> 15.01s",
+      "memory_bandwidth": "42 words -> 18.89s",
+      "clusters": "34 words -> 15.31s",
+      "inference_scale": "51 words -> 21.91s",
+      "real_cost": "42 words -> 21.82s",
+      "takeaway": "55 words -> 20.90s"
+    },
+    "visual_inspection": {
+      "method": "frames extracted from the actual final muxed MP4 via ffmpeg -ss across the full timeline (t=5,10,20,35,55,70,84.9,95,115,135,155,168s), including a scene-boundary frame (t=84.9, memory_bandwidth->clusters), viewed directly",
+      "character_cropping": "PASS - none observed (safe_character bounds-clamping)",
+      "pose_bleed": "PASS - none observed (adaptive alpha-valley extraction from TASK-010)",
+      "character_consistency": "PASS - same 4 clean poses used consistently across all 9 scenes",
+      "label_diagram_overlap": "PASS - none observed",
+      "transition_artifacts": "PASS - sweep confirmed subtle at the inspected boundary frame (t=84.9s), does not compete with the caption text-reveal happening simultaneously",
+      "excessive_empty_space": "PASS - shared stage panel + appropriately sized diagrams",
+      "readability_at_1080p": "PASS",
+      "camera_framing": "PASS - purposeful pushes/pans/zoom-out visible (CPU_VS_GPU push toward GPU, clusters zoom-out to reveal scale, inference_scale pipeline layout)",
+      "animation_continuity": "PASS - staggered core-grid cell build-in, traveling-dot data streams, multiplying GPU grid all confirmed working across scenes",
+      "narration_visual_synchronization": "PASS - scene visual timing is derived directly from each scene's measured narration length (compute_timeline), and the audio silence-gap pattern confirms the mix lines up with scene boundaries",
+      "accidental_duplicate_characters": "PASS - structurally prevented by the TASK-010 scene-engine fix (only the last scene with alpha>0 supplies the rendered character)",
+      "visual_continuity_between_scenes": "PASS - consistent theme, stage panel, typography, and character across all 9 scenes"
+    },
+    "result": "PASS - all required ffprobe, audio, and visual checks satisfied"
+  },
+  "commit_sha": "d465e4bc225b9d6393493fc05f068a7df6a1b189",
+  "git_actions_performed": [
+    "staged src/scene_engine.py (transition tuning), src/create_gpu_explainer.py (new), content/gpu_explainer_script.json (new) only",
+    "committed as d465e4b",
+    "pushed d465e4b to origin/main (fast-forward, 0cf0cd4..d465e4b)",
+    "did not stage output/gpu_explainer_final.mp4, the 9 per-scene narration wavs, the combined audio track, or temp/gpu_explainer/ (all covered by existing .gitignore)",
+    "did not touch assets/character/character_reference_sheet.png -- character identity unchanged, no redesign",
+    "this status file will be committed and pushed separately as the final handoff commit"
+  ],
+  "next_action": "Per TASK-011's stop condition, halting here for user review. This is a production CANDIDATE only -- NOT published, uploaded, scheduled, or otherwise released to YouTube or anywhere public. No second video was started. Recommend the user watch output/gpu_explainer_final.mp4 in full before any publishing decision. Two open items worth a decision at that point: (1) the 'reference' character pose is still unused (no true zero-alpha gap to its neighbour in the source sheet) -- fine for this build since 4 poses proved enough variety across 9 scenes, but a 5th pose would need a fresh asset if ever wanted; (2) the two earlier non-canonical visual directions (TASK-005 dark theme, TASK-006 light theme without character) still exist in src/ alongside this one -- worth formally retiring now that a full production video has shipped on the locked character-led direction."
+}
