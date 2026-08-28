@@ -95,15 +95,19 @@ def hand_connector(draw, theme, pose, cx, bottom_y, height, flip, target, t, gro
     _scene.pipeline_arrow(draw, origin, target, t, grow_start, grow_end, theme, alpha=alpha * 0.75, width=3)
 
 
-def transition_sweep(draw, t, boundary, theme, half_width=0.35, color_key="blue_bright", strength=0.10):
+def transition_sweep(draw, t, boundary, theme, half_width=0.18, color_key="blue_bright", strength=0.045):
+    """A very subtle light sweep marking a scene boundary. TASK-010's
+    regression review flagged the original version (half_width=0.35,
+    strength=0.10) as too dominant -- narrower, fainter, and quicker
+    here so it reads as polish rather than competing with content."""
     start, end = boundary - half_width, boundary + half_width
     p = mg.window(t, start, end)
     if p <= 0.001 or p >= 0.999:
         return
     band_alpha = (1.0 - abs(2 * p - 1.0)) * strength
-    x = mg.lerp(-300, mg.WIDTH + 300, p)
+    x = mg.lerp(-200, mg.WIDTH + 200, p)
     draw.polygon(
-        [(x, 0), (x + 220, 0), (x - 220, mg.HEIGHT), (x - 440, mg.HEIGHT)],
+        [(x, 0), (x + 130, 0), (x - 130, mg.HEIGHT), (x - 260, mg.HEIGHT)],
         fill=mg.rgba(theme[color_key], band_alpha),
     )
 

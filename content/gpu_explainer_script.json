@@ -1,0 +1,51 @@
+{
+  "video_title": "Why AI Companies Need So Many GPUs",
+  "source": "content/gpu_story.txt and content/gpu_story_scenes.json (existing project story/content, adapted for character-led narration segments per TASK-011)",
+  "scenes": [
+    {
+      "id": "hook",
+      "title_lines": ["AI LOOKS SIMPLE.", "IT ISN'T."],
+      "narration": "Artificial intelligence looks simple from the outside. You type a question, an AI model processes it, and an answer appears on your screen. But behind that simple interaction is a massive computing operation."
+    },
+    {
+      "id": "why_gpus",
+      "title_lines": ["WHY GPUS MATTER"],
+      "narration": "This is one of the reasons GPUs have become so important to the AI industry. A modern AI model performs enormous numbers of mathematical operations, and much of that work can be done in parallel."
+    },
+    {
+      "id": "cpu_vs_gpu",
+      "title_lines": ["CPU VS GPU"],
+      "narration": "That is where GPUs have an advantage. Unlike a traditional CPU, which handles a smaller number of complex tasks very efficiently, a GPU is built with many processing cores that work on large numbers of calculations at the same time."
+    },
+    {
+      "id": "parallelism",
+      "title_lines": ["MASSIVE PARALLELISM"],
+      "narration": "For AI workloads, that parallelism is extremely valuable. Instead of solving one piece at a time, a GPU splits the problem into thousands of smaller pieces and processes them all at once, across every core."
+    },
+    {
+      "id": "memory_bandwidth",
+      "title_lines": ["MEMORY + BANDWIDTH"],
+      "narration": "But computing power is only part of the story. AI models also need large amounts of high-speed memory. During training and inference, the system constantly moves data between memory and the processors, so as models grow larger, memory bandwidth becomes increasingly important."
+    },
+    {
+      "id": "clusters",
+      "title_lines": ["GPU CLUSTERS"],
+      "narration": "This is why an AI data center doesn't simply contain one powerful GPU. Large AI systems connect many accelerators together, dividing enormous workloads across multiple processors to keep them working as efficiently as possible."
+    },
+    {
+      "id": "inference_scale",
+      "title_lines": ["SERVING MILLIONS", "OF REQUESTS"],
+      "narration": "There is another reason companies need so much hardware: inference. Once a model is deployed, users continuously send it requests. Every question, image, or piece of code requires computation, and if millions of people use a service at the same time, the company needs enough capacity to keep response times fast."
+    },
+    {
+      "id": "real_cost",
+      "title_lines": ["THE REAL COST"],
+      "narration": "This creates a business problem as well as a technology problem. Companies have to balance performance, capacity, electricity, cooling, networking, hardware costs, and utilization. That is why the AI boom is also creating enormous demand for data centers and accelerated computing infrastructure."
+    },
+    {
+      "id": "takeaway",
+      "title_lines": ["AI NEEDS MASSIVE", "PARALLEL COMPUTING"],
+      "narration": "So when you use an AI chatbot, you are not simply interacting with a piece of software. Behind that response is an entire computing infrastructure, working to perform massive amounts of mathematical work as quickly as possible. That is the real reason GPUs have become one of the most important pieces of the AI economy."
+    }
+  ]
+}
