@@ -44,9 +44,17 @@ def _crypt32():
         wintypes.LPVOID, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(DATA_BLOB)
     ]
     dll.CryptUnprotectData.restype = wintypes.BOOL
-    dll.LocalFree.argtypes = [wintypes.HLOCAL]
-    dll.LocalFree.restype = wintypes.HLOCAL
     return dll
+
+
+def _local_free(pointer) -> None:
+    # CryptProtectData/CryptUnprotectData allocate returned buffers with
+    # LocalAlloc; LocalFree is exported by kernel32, not crypt32.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    kernel32.LocalFree.restype = wintypes.HLOCAL
+    if pointer:
+        kernel32.LocalFree(pointer)
 
 
 def protect(secret: str) -> None:
@@ -64,8 +72,7 @@ def protect(secret: str) -> None:
         os.replace(tmp, STORE_PATH)
     finally:
         if protected.pbData:
-            dll.LocalFree(protected.pbData)
-        # Keep references alive until the native call has completed.
+            _local_free(protected.pbData)
         _ = source_buf
 
 
@@ -84,7 +91,7 @@ def unprotect() -> str | None:
         return _bytes(decrypted).decode("utf-8")
     finally:
         if decrypted.pbData:
-            dll.LocalFree(decrypted.pbData)
+            _local_free(decrypted.pbData)
         _ = source_buf
 
 
