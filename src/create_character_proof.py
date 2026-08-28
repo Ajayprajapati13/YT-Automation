@@ -1,32 +1,22 @@
-"""TASK-009: cinematic polish of the TASK-008 character-led GPU proof.
+"""Character-led GPU explainer proof, on the reusable scene engine.
 
-Reuses the milestone-1/2/3 engine (motion_graphics.py) and the
-create_poc_scene THEME/caption system unchanged. Character poses come
-from character_assets.py (extraction fixed in this revision -- see its
-module docstring). This file's structure is new (6 beats matching
-TASK-009's storyboard) but every primitive it calls (easing, glow,
-arrows, camera, text_reveal) is shared engine code, not reimplemented.
+TASK-009 built this as 6 bespoke beat functions with hand-wired cross-
+fade/transition/character logic duplicated in each one. TASK-010 (this
+revision) converts that into `scene_engine.Scene` data objects run by
+a single shared `scene_engine.render_scenes()` — the diagram content
+per scene is unchanged (same visuals, same timings), but the plumbing
+around it (fade timing, transition sweep, glow pass, "only the active
+scene's character is drawn") is now centralized, so the remaining
+full-video scenes can be added as new Scene entries instead of new
+copies of that plumbing.
 
-Fixes applied vs. TASK-008 (see task's "Problems to fix" list):
-  1. Character is always composited in FIXED post-camera screen
-     coordinates (never put through a whole-frame zoom/crop), so it
-     cannot be clipped by camera movement. Placement is also bounds-
-     checked to stay within a safe margin.
-  2. character_assets.py now finds true alpha-density valleys between
-     poses instead of splitting the sheet into equal-width columns,
-     eliminating adjacent-pose bleed at 3 of 4 pose boundaries.
-  3/4. Every beat draws inside a shared "stage" backdrop panel that
-     visually groups the character + diagram instead of floating them
-     in empty space, and elements are sized to fill it.
-  5. A connector line is drawn from the character's hand (see
-     character_assets.hand_point) to the diagram it's discussing.
-  6. Titles/captions reveal via motion_graphics.text_reveal (a wipe),
-     not a static fade-in block.
-  7. motion_graphics.Camera pushes/pans specific diagram elements per
-     beat (never the character), so camera motion is object-level and
-     intentional, not a blanket canvas shift.
-  8. Beat boundaries cross-fade through a brief bright sweep instead of
-     a flat dissolve.
+Regression fix found while converting: TASK-009's takeaway character
+was composited as a special case *in addition to* whichever beat
+function's character was still fading out, so for ~0.5s two character
+poses rendered superimposed during the SCALE->TAKEAWAY cross-fade. On
+the scene engine, TAKEAWAY is just the last Scene in the list, so its
+character naturally wins once its alpha is non-zero -- verified fixed,
+see TASK-010 status validation.
 
 Output: C:\\YT-Automation\\output\\gpu_character_proof.mp4
 """
@@ -42,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import motion_graphics as mg
 import create_poc_scene as scene
 import character_assets as ca
+import scene_engine as se
 
 BASE_DIR = Path(r"C:\YT-Automation")
 SCRIPT_FILE = BASE_DIR / "content" / "gpu_character_proof_script.txt"
@@ -62,57 +53,12 @@ OUTRO_HOLD = 1.5
 PARALLAX_MARGIN = 220
 STAGE_BOX = (110, 140, 1830, 1010)
 
-# Safe placement bounds so a character sprite can never clip a frame edge.
-SAFE_MARGIN = 30
-
-
-def beat_alpha(t, start, end, fade=0.6, overlap=0.5):
-    """Fade-in begins `overlap` seconds before the nominal boundary so
-    consecutive beats genuinely cross-fade instead of both hitting zero
-    alpha at the same instant (which read as a blank flash)."""
-    return mg.fade_window(t, start - overlap, start - overlap + fade, end - fade, end)
-
-
-def beat_progress(t, start, dur=0.8):
-    return mg.ease_out_back(mg.window(t, start, start + dur))
-
-
-def stage_panel(draw, alpha, box=STAGE_BOX):
-    if alpha <= 0.001:
-        return
-    mg.draw_rounded_rect(draw, box, 44, fill=(246, 249, 253), alpha=alpha * 0.65)
-    mg.draw_rounded_rect(draw, box, 44, outline=THEME["blue"], width=2, alpha=alpha * 0.22)
-
-
-def safe_character(pose, cx, bottom_y, target_height, alpha, flip=False):
-    """Clamp a character placement so it always stays fully on-screen."""
-    native = ca.load_poses()[pose]
-    width = target_height * (native.width / native.height)
-
-    cx = max(SAFE_MARGIN + width / 2, min(mg.WIDTH - SAFE_MARGIN - width / 2, cx))
-    bottom_y = max(SAFE_MARGIN + target_height, min(mg.HEIGHT - SAFE_MARGIN, bottom_y))
-
-    return (pose, cx, bottom_y, target_height, alpha, flip)
+beat_progress = se.beat_progress
+safe_character = se.safe_character
 
 
 def hand_connector(draw, pose, cx, bottom_y, height, flip, target, t, grow_start, grow_end, alpha):
-    origin = ca.hand_point(pose, cx, bottom_y, height, flip=flip)
-    if origin is None:
-        return
-    scene.pipeline_arrow(draw, origin, target, t, grow_start, grow_end, THEME, alpha=alpha * 0.75, width=3)
-
-
-def transition_sweep(draw, t, start, end):
-    """Brief bright diagonal sweep marking a beat boundary (fix #8)."""
-    p = mg.window(t, start, end)
-    if p <= 0.001 or p >= 0.999:
-        return
-    band_alpha = (1.0 - abs(2 * p - 1.0)) * 0.10
-    x = mg.lerp(-300, mg.WIDTH + 300, p)
-    draw.polygon(
-        [(x, 0), (x + 220, 0), (x - 220, mg.HEIGHT), (x - 440, mg.HEIGHT)],
-        fill=mg.rgba(THEME["blue_bright"], band_alpha),
-    )
+    se.hand_connector(draw, THEME, pose, cx, bottom_y, height, flip, target, t, grow_start, grow_end, alpha)
 
 
 def core_grid(draw, cx, cy, w, h, rows, cols, label, alpha, t, build_start, glow,
@@ -154,16 +100,11 @@ def core_grid(draw, cx, cy, w, h, rows, cols, label, alpha, t, build_start, glow
 
 
 # ------------------------------------------------------------------
-# Beat 1: HOOK
+# Scene 1: HOOK
 # ------------------------------------------------------------------
 
-def beat_hook(draw, layer, t, glow):
+def hook_diagram(draw, layer, t, alpha, glow):
     start, end = BEATS[0], BEATS[1]
-    alpha = beat_alpha(t, start, end, overlap=0.0)
-    if alpha <= 0.001:
-        return None
-
-    stage_panel(draw, alpha)
 
     title_alpha = mg.fade_window(t, start + 0.2, start + 0.5, end - 0.6, end)
     p1 = mg.ease_out_cubic(mg.window(t, start + 0.3, start + 1.3))
@@ -177,22 +118,17 @@ def beat_hook(draw, layer, t, glow):
 
 
 # ------------------------------------------------------------------
-# Beat 2: CPU VS GPU
+# Scene 2: CPU VS GPU
 # ------------------------------------------------------------------
 
-def beat_cpu_vs_gpu(draw, layer, t, glow):
+def cpu_vs_gpu_diagram(draw, layer, t, alpha, glow):
     start, end = BEATS[1], BEATS[2]
-    alpha = beat_alpha(t, start, end)
-    if alpha <= 0.001:
-        return None
-
-    stage_panel(draw, alpha)
 
     cam_p = mg.ease_in_out_cubic(mg.window(t, start + 5.5, start + 8.0))
     cam = mg.Camera(anchor=(1080, 560), scale=mg.lerp(1.0, 1.07, cam_p))
 
-    cpu_box = core_grid(draw, *cam.xy(430, 560), cam.wh(300), cam.wh(300), 2, 2,
-                         "CPU", alpha, t, start + 0.3, glow, stagger=0.35, color=CPU_COLOR)
+    core_grid(draw, *cam.xy(430, 560), cam.wh(300), cam.wh(300), 2, 2,
+              "CPU", alpha, t, start + 0.3, glow, stagger=0.35, color=CPU_COLOR)
     gpu_box = core_grid(draw, *cam.xy(1080, 560), cam.wh(420), cam.wh(300), 4, 8,
                          "GPU", alpha, t, start + 1.6, glow, stagger=0.045)
 
@@ -210,16 +146,11 @@ def beat_cpu_vs_gpu(draw, layer, t, glow):
 
 
 # ------------------------------------------------------------------
-# Beat 3: PARALLEL PROCESSING
+# Scene 3: PARALLEL PROCESSING
 # ------------------------------------------------------------------
 
-def beat_parallel(draw, layer, t, glow):
+def parallel_diagram(draw, layer, t, alpha, glow):
     start, end = BEATS[2], BEATS[3]
-    alpha = beat_alpha(t, start, end)
-    if alpha <= 0.001:
-        return None
-
-    stage_panel(draw, alpha)
 
     data_box = (250, 500, 430, 620)
     data_alpha = alpha * mg.fade_window(t, start + 0.2, start + 0.6)
@@ -227,10 +158,8 @@ def beat_parallel(draw, layer, t, glow):
     mg.draw_text_centered(draw, "DATA", 340, 560, 24, THEME["text"], alpha=data_alpha, bold=True)
     glow.append(("rect", data_box, 14, THEME["blue"], data_alpha * 0.2))
 
-    gpu_box = core_grid(draw, 1180, 560, 520, 380, 4, 8, "GPU CORES", alpha, t,
-                         start + 0.9, glow, stagger=0.04)
+    core_grid(draw, 1180, 560, 520, 380, 4, 8, "GPU CORES", alpha, t, start + 0.9, glow, stagger=0.04)
 
-    # Multiple simultaneous particle streams into different cells (parallel work).
     targets_y = [430, 490, 560, 630, 690]
     for i, ty in enumerate(targets_y):
         stream_start = start + 1.8 + i * 0.1
@@ -245,16 +174,11 @@ def beat_parallel(draw, layer, t, glow):
 
 
 # ------------------------------------------------------------------
-# Beat 4: GPU + AI
+# Scene 4: GPU + AI
 # ------------------------------------------------------------------
 
-def beat_gpu_ai(draw, layer, t, glow):
+def gpu_ai_diagram(draw, layer, t, alpha, glow):
     start, end = BEATS[3], BEATS[4]
-    alpha = beat_alpha(t, start, end)
-    if alpha <= 0.001:
-        return None
-
-    stage_panel(draw, alpha)
 
     pan_p = mg.ease_in_out_cubic(mg.window(t, start + 1.0, start + 7.0))
     cam = mg.Camera(anchor=(mg.lerp(500, 1350, pan_p), 560), scale=1.03)
@@ -263,8 +187,6 @@ def beat_gpu_ai(draw, layer, t, glow):
     gpu_c = cam.xy(760, 560)
     model_c = cam.xy(1300, 560)
 
-    # A single connecting "pipe" drawn under the boxes so the stages read
-    # as one flowing pipeline rather than independent floating boxes.
     pipe_alpha = alpha * mg.fade_window(t, start + 0.3, start + 0.9)
     pipe_box = (data_c[0], gpu_c[1] - cam.wh(18), model_c[0], gpu_c[1] + cam.wh(18))
     mg.draw_rounded_rect(draw, pipe_box, cam.wh(18), fill=THEME["blue"], alpha=pipe_alpha * 0.12)
@@ -302,7 +224,7 @@ def beat_gpu_ai(draw, layer, t, glow):
 
 
 # ------------------------------------------------------------------
-# Beat 5: SCALE
+# Scene 5: SCALE
 # ------------------------------------------------------------------
 
 _SCALE_ANCHOR = (860, 590)
@@ -314,13 +236,8 @@ _SCALE_POSITIONS = sorted(_SCALE_GRID, key=lambda p: p[0] ** 2 + p[1] ** 2)
 _SCALE_REVEAL_TIMES = [0.4 + i * 0.19 for i in range(len(_SCALE_POSITIONS))]
 
 
-def beat_scale(draw, layer, t, glow):
+def scale_diagram(draw, layer, t, alpha, glow):
     start, end = BEATS[4], BEATS[5]
-    alpha = beat_alpha(t, start, end)
-    if alpha <= 0.001:
-        return None
-
-    stage_panel(draw, alpha)
 
     zoom_p = mg.ease_in_out_cubic(mg.window(t, start + 1.0, start + 6.0))
     cam = mg.Camera(anchor=_SCALE_ANCHOR, scale=mg.lerp(1.0, 0.88, zoom_p))
@@ -348,11 +265,26 @@ def beat_scale(draw, layer, t, glow):
 
 
 # ------------------------------------------------------------------
-# Beat 6: TAKEAWAY
+# Scene 6: TAKEAWAY
 # ------------------------------------------------------------------
 
-def draw_takeaway(rgb_image, t):
+def takeaway_diagram(draw, layer, t, alpha, glow):
+    """No diagram content -- the closing statement is a whole-frame
+    post_fn effect (dim + text + bar), applied after character
+    compositing. This scene only supplies the closing character, so it
+    participates in the same cross-fade/"last wins" character logic as
+    every other scene (this is what fixes the TASK-009 double-character
+    bug at the SCALE->TAKEAWAY boundary)."""
+    start = BEATS[5]
+    prog = beat_progress(t, start)
+    return safe_character("closing", 1460, mg.lerp(1160, 1030, prog), int(mg.lerp(680, 720, prog)), alpha)
+
+
+def draw_takeaway_overlay(rgb_image, t):
     start, end = BEATS[5], BEATS[6]
+    if t < start:
+        return rgb_image
+
     text_window = (start + 0.6, start + 1.6)
     bar_window = (start + 1.6, start + 2.2)
 
@@ -375,11 +307,11 @@ def draw_takeaway(rgb_image, t):
         draw.rectangle((0, 0, mg.WIDTH, mg.HEIGHT), fill=mg.rgba(THEME["dim_overlay_color"], dim_alpha))
 
     if alpha > 0.001:
-        scale = mg.lerp(0.85, 1.0, progress)
+        scale_ = mg.lerp(0.85, 1.0, progress)
         cx, cy = 740, mg.HEIGHT / 2
-        mg.draw_text_centered(draw, "AI NEEDS MASSIVE", cx, cy - 60 * scale, int(62 * scale),
+        mg.draw_text_centered(draw, "AI NEEDS MASSIVE", cx, cy - 60 * scale_, int(62 * scale_),
                                THEME["text"], alpha=alpha, bold=True)
-        mg.draw_text_centered(draw, "PARALLEL COMPUTING", cx, cy + 60 * scale, int(62 * scale),
+        mg.draw_text_centered(draw, "PARALLEL COMPUTING", cx, cy + 60 * scale_, int(62 * scale_),
                                THEME["blue_bright"], alpha=alpha, bold=True)
 
     bar_progress = mg.ease_in_out_cubic(mg.window(t, *bar_window))
@@ -392,62 +324,53 @@ def draw_takeaway(rgb_image, t):
     return composed.convert("RGB")
 
 
-BEAT_FUNCS = [beat_hook, beat_cpu_vs_gpu, beat_parallel, beat_gpu_ai, beat_scale]
+# ------------------------------------------------------------------
+# Scene list (the production-scene representation) and render entrypoint
+# ------------------------------------------------------------------
+
+SCENES = [
+    se.Scene(
+        id="hook", title="HOOK", narration="Every modern AI system runs on a huge amount of hardware "
+        "behind the scenes. So why does AI need so many GPUs?",
+        start=BEATS[0], end=BEATS[1], draw_diagram=hook_diagram, stage_box=STAGE_BOX, overlap=0.0,
+        validation={"min_duration": 6.0},
+    ),
+    se.Scene(
+        id="cpu_vs_gpu", title="CPU VS GPU", narration="A CPU handles a handful of tasks with a few "
+        "powerful cores. A GPU takes the opposite approach: thousands of simpler cores, built to run "
+        "in parallel.",
+        start=BEATS[1], end=BEATS[2], draw_diagram=cpu_vs_gpu_diagram, stage_box=STAGE_BOX,
+        validation={"min_duration": 8.0},
+    ),
+    se.Scene(
+        id="parallel", title="PARALLEL PROCESSING", narration="Instead of one task at a time, a GPU "
+        "splits the work into thousands of pieces and processes them all at once, across every core.",
+        start=BEATS[2], end=BEATS[3], draw_diagram=parallel_diagram, stage_box=STAGE_BOX,
+        validation={"min_duration": 8.0},
+    ),
+    se.Scene(
+        id="gpu_ai", title="GPU + AI", narration="That parallel power flows straight into AI. Data "
+        "moves through GPU memory and compute cores, feeding the model with results in real time.",
+        start=BEATS[3], end=BEATS[4], draw_diagram=gpu_ai_diagram, stage_box=STAGE_BOX,
+        validation={"min_duration": 8.0},
+    ),
+    se.Scene(
+        id="scale", title="SCALE", narration="One GPU isn't enough. Real AI systems multiply that "
+        "power across dozens, then thousands of GPUs working together.",
+        start=BEATS[4], end=BEATS[5], draw_diagram=scale_diagram, stage_box=STAGE_BOX,
+        validation={"min_duration": 6.0},
+    ),
+    se.Scene(
+        id="takeaway", title="TAKEAWAY", narration="That is the real reason AI needs massive parallel "
+        "computing power.",
+        start=BEATS[5], end=BEATS[6], draw_diagram=takeaway_diagram, stage_box=None,
+        validation={"min_duration": 6.0},
+    ),
+]
 
 
-def make_draw_frame(background_wide):
-    def draw_frame(t, frame_index, total_frames):
-        base = mg.parallax_crop(background_wide, t, mg.WIDTH, mg.HEIGHT).convert("RGBA")
-        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(layer, "RGBA")
-
-        glow_sources = []
-        char_call = None
-        for fn in BEAT_FUNCS:
-            result = fn(draw, layer, t, glow_sources)
-            if result is not None:
-                char_call = result
-
-        for boundary in BEATS[1:6]:
-            transition_sweep(draw, t, boundary - 0.35, boundary + 0.35)
-
-        composed = Image.alpha_composite(base, layer)
-        rgb = composed.convert("RGB")
-
-        if glow_sources:
-            def glow_fn(d, s):
-                for kind, box, radius, color, a in glow_sources:
-                    if a <= 0.001:
-                        continue
-                    x0, y0, x1, y1 = box
-                    width = max(1, round(12 * s))
-                    d.rounded_rectangle((x0 * s, y0 * s, x1 * s, y1 * s), radius=radius * s,
-                                         outline=mg.blend_toward(color, THEME["glow_neutral"], min(1.0, a)),
-                                         width=width)
-            rgb = mg.glow_composite(rgb, glow_fn, blur_radius=12, downsample=3, blend=THEME["glow_blend"])
-
-        # Character is composited last, in fixed final-frame coordinates,
-        # so no camera/zoom pass can ever clip it (fix #1).
-        rgba = rgb.convert("RGBA")
-        if char_call is not None:
-            pose, cx, bottom_y, height, alpha, flip = char_call
-            ca.paste_character(rgba, pose, cx, bottom_y, height, alpha=alpha, flip=flip)
-
-        takeaway_alpha = mg.fade_window(t, BEATS[5] - 0.5, BEATS[5] - 0.5 + 0.7)
-        if takeaway_alpha > 0.001:
-            prog = beat_progress(t, BEATS[5])
-            pose, cx, bottom_y, height, _a, flip = safe_character(
-                "closing", 1460, mg.lerp(1160, 1030, prog), int(mg.lerp(680, 720, prog)), takeaway_alpha)
-            ca.paste_character(rgba, pose, cx, bottom_y, height, alpha=takeaway_alpha, flip=flip)
-
-        rgb = rgba.convert("RGB")
-
-        if t >= BEATS[5]:
-            rgb = draw_takeaway(rgb, t)
-
-        return rgb
-
-    return draw_frame
+def make_draw_frame(background_wide, scenes=SCENES):
+    return se.render_scenes(scenes, THEME, background_wide, post_fn=draw_takeaway_overlay)
 
 
 def probe_duration(ffprobe, media_path):
@@ -492,6 +415,14 @@ def volume_check(ffmpeg, media_path):
     }
 
 
+def build_background():
+    return mg.build_background(
+        width=mg.WIDTH + PARALLAX_MARGIN, height=mg.HEIGHT,
+        top=THEME["bg_top"], bottom=THEME["bg_bottom"], grid_color=THEME["bg_grid"],
+        vignette_color=THEME["bg_vignette_color"], vignette_strength=THEME["bg_vignette_strength"],
+    )
+
+
 def main():
     ffmpeg = mg.find_ffmpeg()
     ffprobe = ffmpeg.parent / "ffprobe.exe"
@@ -512,12 +443,7 @@ def main():
     video_duration = max(MIN_DURATION, min(MAX_DURATION, max(BEATS[6], round(audio_duration + OUTRO_HOLD, 1))))
     print(f"Video duration: {video_duration}s")
 
-    background_wide = mg.build_background(
-        width=mg.WIDTH + PARALLAX_MARGIN, height=mg.HEIGHT,
-        top=THEME["bg_top"], bottom=THEME["bg_bottom"], grid_color=THEME["bg_grid"],
-        vignette_color=THEME["bg_vignette_color"], vignette_strength=THEME["bg_vignette_strength"],
-    )
-    draw_frame = make_draw_frame(background_wide)
+    draw_frame = make_draw_frame(build_background())
 
     print("Rendering cinematic character-led scene...")
     mg.render_video(draw_frame, video_duration, SILENT_VIDEO, ffmpeg=ffmpeg, crf=16, preset="medium")
