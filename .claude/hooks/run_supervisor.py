@@ -34,7 +34,13 @@ def main() -> int:
         env=env,
         check=False,
     )
-    return completed.returncode
+
+    # Claude Code treats exit code 2 as a hard block for PreToolUse/Stop.
+    # Never let an unexpected supervisor failure silently permit a material action.
+    if completed.returncode != 0:
+        print("Supervisor failed closed: tool/action blocked.", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
