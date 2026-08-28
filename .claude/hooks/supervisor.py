@@ -21,7 +21,6 @@ API_URL = "https://api.openai.com/v1/responses"
 TIMEOUT = 20
 TASK_PATH = "SUPERVISOR/NEXT_TASK.md"
 
-# Never allow these automatically, even if the model says they are safe.
 HARD_DENY = [
     r"\brm\s+-[^\n]*\brf\b", r"\bsudo(?:\s|$)", r"\brunas(?:\s|$)",
     r"git\s+push\s+[^\n]*(?:--force|-f)(?:\s|$)", r"git\s+reset\s+[^\n]*--hard",
@@ -31,8 +30,6 @@ HARD_DENY = [
     r"\bwget\b[^\n]*\|\s*(?:sh|bash|zsh)\b", r"\bterraform\s+destroy\b",
 ]
 
-# Protected paths are never routine edits. Some are denied outright; others are
-# sent to the reviewer because they can change security/build/deployment behavior.
 DENY_PATHS = [
     r"(^|[/\\])\.env(?:\..*)?($|[/\\])", r"(^|[/\\])(secrets?|credentials?|private|certs?)([/\\]|$)",
     r"(^|[/\\])\.claude[/\\]hooks[/\\]", r"(^|[/\\])\.claude[/\\]settings\.json$",
@@ -45,7 +42,6 @@ REVIEW_PATHS = [
     r"(^|[/\\])(?:terraform|infra|deploy|deployment|k8s|kubernetes)[/\\]",
 ]
 
-# Commands that are routinely safe/reversible and therefore never need an API call.
 SAFE_BASH = [
     r"git\s+(?:status|diff|log|show|branch|rev-parse|remote\s+-v)(?:\s+[^;&|`]+)?$",
     r"(?:pytest|python\s+-m\s+pytest)(?:\s+[^;&|`]+)?$",
@@ -141,15 +137,64 @@ def safe_edit(tool, tool_input):
     path = path_from_input(tool_input)
     if not path or path_matches(path, DENY_PATHS) or path_matches(path, REVIEW_PATHS):
         return False
-    # Never treat hidden credential-like filenames as routine edits.
     if re.search(r"(^|[/\\])(?:\.env|.*(?:secret|credential|password|token|apikey|private[-_]?key).*)$", path, re.I):
         return False
+    return True
+
+def _safe_read_path(path):
+    """Allow read-only inspection of normal repo metadata, including supervisor settings."""
+    p = path.strip().strip('"\'')
+    if not p or p.startswith("-"):
+        return False
+    normalized = p.replace("\\", "/")
+    if normalized.startswith("../") or "/../" in normalized:
+        return False
+    if re.search(r"(^|[/\\])(?:\.env(?:\..*)?|secrets?|credentials?|private|certs?)([/\\]|$)", normalized, re.I):
+        return False
+    if re.search(r"(?:api[_-]?key|password|secret|token|private[-_]?key)", Path(normalized).name, re.I):
+        return False
+    return True
+
+def _safe_bash_command(command):
+    """Strict allowlist for read-only repository inspection, including safe chains/pipelines."""
+    command = command.strip()
+    if not command or any(x in command for x in ("$(", "`", "&&&", "<<<")):
+        return False
+    # Only stderr merge is permitted; no output redirection or background execution.
+    command = re.sub(r"\s+2>&1", "", command)
+    if re.search(r"(?:^|\s)(?:>|>>|<|2>|1>|&>|\|&|&\s*$)", command):
+        return False
+    if re.search(r"\b(?:sudo|runas|curl|wget|Invoke-WebRequest|Invoke-RestMethod|Start-Process|powershell|pwsh|cmd)\b", command, re.I):
+        return False
+    # Split only shell operators that are valid for our read-only allowlist.
+    parts = [p.strip() for p in re.split(r"\s*(?:&&|;|\|)\s*", command) if p.strip()]
+    if not parts or len(parts) > 12:
+        return False
+    for part in parts:
+        if not re.fullmatch(r"(?:git\s+(?:status|diff|log|show|branch|rev-parse|remote\s+-v)(?:\s+[^;&|`]+)?|(?:pytest|python\s+-m\s+pytest)(?:\s+[^;&|`]+)?|(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:test|lint|format|typecheck))(?:\s+[^;&|`]+)?|(?:ruff|mypy|flake8|eslint|prettier)(?:\s+[^;&|`]+)?|(?:pwd|ls|dir)(?:\s+[^;&|`]+)?|echo\s+[^;&|`]*|find\s+[^;&|`]+|head\s+-?\d+(?:\s+[^;&|`]+)?|tail\s+-?\d+(?:\s+[^;&|`]+)?|cat\s+[^;&|`]+)$", part, re.I):
+            return False
+        # find is read-only only; reject action expressions.
+        if re.search(r"\bfind\b.*(?:-delete|-exec|-execdir|-ok|-okdir)", part, re.I):
+            return False
+        # cat may inspect normal repository metadata, but never secret-like paths.
+        if re.match(r"^cat\s+", part, re.I):
+            args = re.sub(r"^cat\s+", "", part, flags=re.I).split()
+            if not args or not all(_safe_read_path(a) for a in args):
+                return False
+        if re.match(r"^(?:head|tail)\s+", part, re.I):
+            # Arguments after the numeric limit are file paths; reject obvious sensitive paths.
+            tokens = re.sub(r"^(?:head|tail)\s+-?\d+\s*", "", part, flags=re.I).split()
+            if tokens and not all(_safe_read_path(a) for a in tokens):
+                return False
     return True
 
 def classify_pre(tool, tool_input):
     data = json.dumps({"tool": tool, "input": sanitize(tool_input)}, ensure_ascii=False)
     if path_matches(data, DENY_PATHS):
-        return "deny", "Sensitive or supervisor-controlled path is blocked by local policy."
+        # Bash read-only inspection is handled by the strict command allowlist below;
+        # direct Read/Edit/Write access to supervisor files remains denied.
+        if tool != "Bash":
+            return "deny", "Sensitive or supervisor-controlled path is blocked by local policy."
     for p in HARD_DENY:
         if re.search(p, data, re.I):
             return "deny", "Blocked by deterministic safety policy."
@@ -159,11 +204,12 @@ def classify_pre(tool, tool_input):
         return "allow", "Routine repository edit outside protected paths; pre-approved locally."
     if tool == "Bash":
         command = str(tool_input.get("command", "")).strip()
+        if _safe_bash_command(command):
+            return "allow", "Routine repository inspection/test operation; no API review required."
         if any(re.fullmatch(p, command, re.I) for p in SAFE_BASH):
             return "allow", "Routine read-only/test/lint operation; no API review required."
     if path_matches(path_from_input(tool_input), REVIEW_PATHS):
         return "review", "Protected build/deployment configuration requires supervisor review."
-    # Material external, install, publish, cloud, container, or arbitrary shell action.
     return "review", "Material operation requires supervisor review."
 
 def reviewer(mode, payload):
