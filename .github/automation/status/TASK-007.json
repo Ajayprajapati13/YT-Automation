@@ -1,0 +1,30 @@
+{
+  "task_id": "TASK-007",
+  "status": "FAILED",
+  "timestamp": "2026-08-28T11:11:22Z",
+  "summary": "Blocked before any implementation. TASK-007 requires 'the approved character concept from the latest storyboard reference' (a consistent fictional 3D/cartoon presenter: dark styled hair, expressive face, white hoodie with blue accents), used consistently across 5+ poses/shots in a polished, professional composition. No such asset, storyboard, or concept art exists anywhere in this repository -- checked assets/ (only existing GPU-diagram scene PNGs/JPGs), content/ (only text/JSON scripts), config/, and a project-wide search for character/storyboard/presenter/host/avatar/mascot/hoodie files and any vector/design source files (svg/psd/ai/blend/fbx) -- all empty. The only rendering capability available in this project is Pillow primitive drawing (rectangles, ellipses, lines, text) via src/motion_graphics.py, which cannot produce a convincing, polished human character with an 'expressive face' -- attempting one would produce a crude geometric approximation, which the task explicitly forbids ('do NOT fake consistency'). This session also has no image-generation tool available, and the project's standing constraints (set at the start of this engagement) rule out local AI video/image generation and paid APIs, so a character cannot legitimately be generated inside this task either. No source files were modified; no render was attempted.",
+  "changed_files": [],
+  "validation": {
+    "result": "NOT ATTEMPTED - blocked before implementation, per the task's own instruction not to fake character consistency"
+  },
+  "commit_sha": null,
+  "git_actions_performed": [
+    "no source files changed - nothing staged or committed except this status file",
+    "this status file will be committed and pushed as the sole handoff for TASK-007"
+  ],
+  "blocker": {
+    "what_is_missing": "A real character reference asset (or asset source) for the 'friendly young technical presenter' -- e.g. a set of transparent PNG stills covering the needed poses (intro, CPU-vs-GPU gesture, pointing at diagram, explaining, closing take-away), or a single clean reference image plus explicit permission/approach for deriving pose variants from it.",
+    "why_not_faked": "A Pillow-primitive 'face' (circles/rectangles) at 1920x1080 in a polished technical-explainer context would not read as a consistent, expressive, professional character -- it would look like a placeholder, undermining exactly the visual-quality bar this milestone track has been building toward."
+  },
+  "proposed_next_steps": [
+    {
+      "option": "A (recommended) - human-supplied reference art",
+      "description": "User generates or sources 5-6 consistent character stills (transparent-background PNG) matching the storyboard beats, using whatever tool/license they choose outside this pipeline (keeps this project's no-paid-API/no-local-AI-gen constraint intact), and drops them in assets/character/. A follow-up task then composites/animates those stills into the existing scene (position, scale, entrance/exit, pointing-toward-diagram) using the current Pillow/FFmpeg engine -- no new dependencies needed for that half."
+    },
+    {
+      "option": "B - scoped-down abstract mascot",
+      "description": "Replace the human presenter with a simple geometric/flat-vector tech mascot (e.g. a rounded orb or badge shape with a hoodie-like collar), buildable entirely with existing Pillow primitives and trivially consistent since it is one parametrized draw function. This changes the creative brief (no human face) and should only proceed with explicit user sign-off, since it departs from the approved character concept described in the task."
+    }
+  ],
+  "next_action": "Awaiting a decision from the user/ChatGPT on option A vs B above (or another supplied asset). Per TASK-007's stop condition, halting here - did not begin the full-length video or any YouTube publishing automation, and made no code changes."
+}
