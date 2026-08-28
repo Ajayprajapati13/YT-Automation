@@ -1,0 +1,82 @@
+{
+  "video": {
+    "title": "Why AI Companies Need So Many GPUs",
+    "target_duration_seconds": 165,
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080"
+  },
+  "scenes": [
+    {
+      "id": 1,
+      "start": 0,
+      "end": 15,
+      "visual": "A person interacting with an advanced AI assistant on a computer, modern technology environment",
+      "narration_topic": "AI appears simple to the user, but significant computing happens behind the interface",
+      "asset_type": "image"
+    },
+    {
+      "id": 2,
+      "start": 15,
+      "end": 30,
+      "visual": "Large modern AI data center filled with server racks and computing infrastructure",
+      "narration_topic": "AI requires enormous amounts of computing power",
+      "asset_type": "image"
+    },
+    {
+      "id": 3,
+      "start": 30,
+      "end": 45,
+      "visual": "Close-up of modern GPU hardware installed in a high-performance server",
+      "narration_topic": "GPUs are important because AI performs enormous numbers of mathematical operations",
+      "asset_type": "image"
+    },
+    {
+      "id": 4,
+      "start": 45,
+      "end": 62,
+      "visual": "Conceptual visualization showing many parallel processing units working simultaneously",
+      "narration_topic": "GPU parallelism provides an advantage for AI workloads",
+      "asset_type": "graphic"
+    },
+    {
+      "id": 5,
+      "start": 62,
+      "end": 80,
+      "visual": "Visualization of GPU memory, high-speed data movement and bandwidth between processors and memory",
+      "narration_topic": "AI also requires large amounts of high-speed memory and bandwidth",
+      "asset_type": "graphic"
+    },
+    {
+      "id": 6,
+      "start": 80,
+      "end": 100,
+      "visual": "Rows of AI servers connected together inside a large data center",
+      "narration_topic": "Large AI systems connect many accelerators to divide workloads",
+      "asset_type": "image"
+    },
+    {
+      "id": 7,
+      "start": 100,
+      "end": 120,
+      "visual": "Millions of users sending requests to an AI service represented by many connections flowing into a data center",
+      "narration_topic": "AI inference requires computing capacity for continuous user requests",
+      "asset_type": "graphic"
+    },
+    {
+      "id": 8,
+      "start": 120,
+      "end": 145,
+      "visual": "Large data center with electricity, cooling and networking infrastructure represented visually",
+      "narration_topic": "Companies must balance hardware, electricity, cooling, networking and utilization",
+      "asset_type": "image"
+    },
+    {
+      "id": 9,
+      "start": 145,
+      "end": 165,
+      "visual": "Cinematic wide shot of a futuristic AI data center representing the global AI computing race",
+      "narration_topic": "AI services depend on enormous computing infrastructure",
+      "asset_type": "image"
+    }
+  ]
+}

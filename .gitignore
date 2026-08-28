@@ -1,0 +1,23 @@
+# Python virtual environment
+.venv/
+
+# Local machine-specific Claude Code settings
+.claude/settings.local.json
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Generated video/audio output (large, regenerable)
+output/
+
+# Temporary render artifacts (large, regenerable)
+temp/
+
+# Logs
+logs/
+*.log
+
+# Environment / secrets
+.env
+*.env

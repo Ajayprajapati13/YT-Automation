@@ -1,0 +1,112 @@
+[
+  {
+    "scene_id": 1,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_01.jpg",
+    "source": "Wikimedia Commons",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Fiscal_Year_2008_DARPA_budget.pdf",
+    "title": "File:Fiscal Year 2008 DARPA budget.pdf",
+    "author": "Defense Advanced Research Projects Agency (DARPA)/ United States Department of Defense (DOD)",
+    "license": "Public domain",
+    "license_url": "",
+    "credit": "Link \n\nDirect",
+    "selection_score": 140
+  },
+  {
+    "scene_id": 2,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_02.png",
+    "source": "Original graphic",
+    "source_url": null,
+    "title": null,
+    "author": "YT-Automation",
+    "license": "Original",
+    "license_url": null,
+    "credit": null,
+    "selection_score": null,
+    "fallback_reason": "No acceptable licensed image found."
+  },
+  {
+    "scene_id": 3,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_03.jpg",
+    "source": "Wikimedia Commons",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Computers_for_Beginners.pdf",
+    "title": "File:Computers for Beginners.pdf",
+    "author": "Dirk Hünniger",
+    "license": "CC BY 3.0",
+    "license_url": "https://creativecommons.org/licenses/by/3.0",
+    "credit": "Own work",
+    "selection_score": 130
+  },
+  {
+    "scene_id": 4,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_04.png",
+    "source": "Original graphic",
+    "source_url": null,
+    "title": null,
+    "author": "YT-Automation",
+    "license": "Original",
+    "license_url": null,
+    "credit": null,
+    "selection_score": null
+  },
+  {
+    "scene_id": 5,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_05.png",
+    "source": "Original graphic",
+    "source_url": null,
+    "title": null,
+    "author": "YT-Automation",
+    "license": "Original",
+    "license_url": null,
+    "credit": null,
+    "selection_score": null
+  },
+  {
+    "scene_id": 6,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_06.jpg",
+    "source": "Wikimedia Commons",
+    "source_url": "https://commons.wikimedia.org/wiki/File:The_Editor_and_Publisher_1910-01-22-_Vol_9_Iss_30_(IA_sim_editor-publisher_1910-01-22_9_30).pdf",
+    "title": "File:The Editor and Publisher 1910-01-22- Vol 9 Iss 30 (IA sim editor-publisher 1910-01-22 9 30).pdf",
+    "author": "",
+    "license": "Public domain",
+    "license_url": "",
+    "credit": "Internet Archive identifier: sim_editor-publisher_1910-01-22_9_30\nhttps://archive.org/download/sim_editor-publisher_1910-01-22_9_30/sim_editor-publisher_1910-01-22_9_30.pdf\nIA contributor: Internet Archive\nIA digitizing sponsor: Kahle/Austin Foundation",
+    "selection_score": 140
+  },
+  {
+    "scene_id": 7,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_07.png",
+    "source": "Original graphic",
+    "source_url": null,
+    "title": null,
+    "author": "YT-Automation",
+    "license": "Original",
+    "license_url": null,
+    "credit": null,
+    "selection_score": null
+  },
+  {
+    "scene_id": 8,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_08.jpg",
+    "source": "Wikimedia Commons",
+    "source_url": "https://commons.wikimedia.org/wiki/File:Omaha_outlook_-_USACE-p16021coll8-1131.pdf",
+    "title": "File:Omaha outlook - USACE-p16021coll8-1131.pdf",
+    "author": "United States. Army. Corps of Engineers. Omaha District. Public Affairs Office",
+    "license": "Public domain",
+    "license_url": "",
+    "credit": "https://usace.contentdm.oclc.org/digital/collection/p16021coll8/id/1131",
+    "selection_score": 130
+  },
+  {
+    "scene_id": 9,
+    "local_file": "C:\\YT-Automation\\assets\\final\\scene_09.png",
+    "source": "Original graphic",
+    "source_url": null,
+    "title": null,
+    "author": "YT-Automation",
+    "license": "Original",
+    "license_url": null,
+    "credit": null,
+    "selection_score": null,
+    "fallback_reason": "No acceptable licensed image found."
+  }
+]
