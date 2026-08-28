@@ -1,0 +1,69 @@
+{
+  "task_id": "TASK-009",
+  "status": "COMPLETED",
+  "timestamp": "2026-08-28T12:20:26Z",
+  "summary": "Polished the TASK-008 character-led GPU proof into a 60s cinematic sequence addressing all 8 problems listed in the task's review. Kept the exact same character identity (assets/character/character_reference_sheet.png, unchanged) and the milestone-1/2/3 engine (motion_graphics.py primitives, create_poc_scene's THEME system) -- no rewrite, only additive fixes: (1) character is now always composited in fixed, bounds-clamped post-camera screen coordinates (safe_character()), so no camera work can ever clip it; (2) character_assets.py locates the true alpha-density valley between each pair of poses instead of splitting the sheet into equal-width columns, which eliminated the adjacent-pose bleed at 3 of 4 pose boundaries at the root cause (verified: left-edge alpha on 'explaining'/'thinking'/'closing' dropped to ~2 out of 255, from 67-94 before); (3/4) every beat now draws inside a shared translucent 'stage' backdrop panel that visually groups the character with its diagram instead of floating both in empty canvas; (5) a new hand_point()/hand_connector() pair draws a connector line from the character's gesturing hand to the diagram it references; (6) motion_graphics.text_reveal() wipes the hook title in left-to-right instead of a static fade; (7) a new motion_graphics.Camera pushes/pans specific diagram coordinates per beat while the character is explicitly excluded from that transform, so camera movement is object-level and intentional rather than a canvas-wide crop; (8) beat boundaries now cross-fade with a real overlap window (the next beat starts fading in before the previous one finishes fading out) plus a brief light sweep, replacing a hard cut that was previously producing a near-blank frame at every transition -- caught and fixed during self-review before the final render, along with a character/diagram-label collision in the PARALLEL beat and a grid/caption overlap in the SCALE beat.",
+  "changed_files": [
+    "src/motion_graphics.py",
+    "src/character_assets.py",
+    "src/create_character_proof.py",
+    "content/gpu_character_proof_script.txt"
+  ],
+  "validation": {
+    "command": "C:\\YT-Automation\\.venv\\Scripts\\python.exe src\\create_character_proof.py",
+    "output_file": "output/gpu_character_proof.mp4",
+    "ffprobe_video": {
+      "codec_name": "h264",
+      "width": 1920,
+      "height": 1080,
+      "pix_fmt": "yuv420p",
+      "r_frame_rate": "30/1",
+      "duration_seconds": 60.0
+    },
+    "ffprobe_audio": {
+      "codec_name": "aac",
+      "sample_rate": 22050,
+      "channels": 1,
+      "duration_seconds": 60.0
+    },
+    "narration_source_duration_seconds": 52.97,
+    "audio_video_duration_match": "exact (60.0s == 60.0s, audio apad-padded to video length)",
+    "file_size_bytes": 6555755,
+    "audio_sanity_check": {
+      "method": "ffmpeg volumedetect filter",
+      "n_samples": 1323000,
+      "mean_volume_db": -20.6,
+      "max_volume_db": -0.4,
+      "result": "PASS - non-silent, healthy speech level, no clipping"
+    },
+    "visual_inspection": {
+      "method": "frames extracted from the actual muxed MP4 via ffmpeg -ss at t=4,13,24,34,45,47,57s, viewed directly",
+      "no_character_clipping": "PASS - safe_character() bounds-clamping verified across all beats",
+      "no_pose_bleed_fragments": "PASS for introg/explaining/thinking/closing (adaptive boundary fix); 'reference' pose remains unused (its own hand has no true zero-alpha gap, confirmed unfixable in TASK-008)",
+      "character_consistency": "PASS - same character across all shots, only pose/scale/flip vary",
+      "intentional_presenter_placement": "PASS - character grouped with diagrams inside shared stage panel, not floating in empty space",
+      "diagram_interaction": "PASS - connector line from hand to active diagram element in CPU_VS_GPU and GPU_AI beats",
+      "title_animation": "PASS - HOOK title wipes in via text_reveal, not a static fade",
+      "object_level_animation": "PASS - CPU/GPU cores build in staggered per-cell, SCALE grid multiplies outward from center, data particles stream individually",
+      "camera_movement": "PASS - Camera push toward GPU box (CPU_VS_GPU), pan along pipeline (GPU_AI), zoom-out to reveal scale (SCALE); character never moves with these transforms",
+      "scene_transitions": "PASS after fix - overlapping cross-fade plus light sweep; original hard-cut version left a near-blank frame at each boundary, caught and fixed pre-render",
+      "white_background_clarity": "PASS",
+      "typography_readability": "PASS",
+      "diagram_contrast": "PASS",
+      "no_excessive_empty_space": "PASS - stage panel + larger diagrams fill the frame vs. TASK-008",
+      "no_excessive_glow": "PASS - glow restrained to diagram box rims, never applied to character pixels (composited after the glow pass)",
+      "no_clipping_or_overlap": "PASS after fixes - caught and corrected a character-over-DATA-label overlap (PARALLEL beat) and a GPU-grid-over-caption overlap (SCALE beat) during self-review before the final render"
+    },
+    "result": "PASS - all ffprobe, audio, and visual checks satisfied"
+  },
+  "commit_sha": "837532a03e0251bf6b8bb2536a253176fad90d31",
+  "git_actions_performed": [
+    "staged src/motion_graphics.py, src/character_assets.py, src/create_character_proof.py, content/gpu_character_proof_script.txt only",
+    "committed as 837532a",
+    "pushed 837532a to origin/main (fast-forward, 3eab715..837532a)",
+    "did not stage output/gpu_character_proof.mp4, output/gpu_character_proof_voice.wav, or temp/character_proof/ (all covered by existing .gitignore)",
+    "did not touch assets/character/character_reference_sheet.png -- character identity unchanged, no new metadata file was needed",
+    "this status file will be committed and pushed separately as the final handoff commit"
+  ],
+  "next_action": "Per TASK-009's stop condition, halting here -- not starting the full 2-3 minute video or YouTube publishing. gpu_character_proof.mp4 is a 60.0s validated cinematic proof, not the full video. The three earlier parallel visual directions (TASK-005 dark theme, TASK-006 light theme without character) remain unconverged with this character-led direction; recommend the next task explicitly choose one direction before any full-length build, rather than continuing to iterate all three."
+}
