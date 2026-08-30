@@ -49,6 +49,10 @@ DEFAULT_MIN_SYNC_SECONDS = 300
 GIT_TIMEOUT_SECONDS = 30
 CLAUDE_LAUNCH_TIMEOUT_SECONDS = 4 * 60 * 60
 
+# Standard Gpg4win install location - a real path, not tied to any specific
+# username. Used only as a last-resort default; see resolve_gpg_executable().
+DEFAULT_WINDOWS_GPG_EXE = Path(r"C:\Program Files\GnuPG\bin\gpg.exe")
+
 WORKER_PROMPT = (
     "Read SUPERVISOR/NEXT_TASK.md and execute the READY task. "
     "Follow the task exactly. Work autonomously on the implementation and "
@@ -215,10 +219,72 @@ def verify_hooks_configured(repo_root: Path = REPO_ROOT) -> tuple[bool, str]:
 # as a manual override alongside this, for tasks that aren't (yet)
 # commit-authorized.
 
-def run_git(args: list, repo_root: Path, timeout: int = GIT_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
+def run_git(
+    args: list,
+    repo_root: Path,
+    timeout: int = GIT_TIMEOUT_SECONDS,
+    env: Optional[dict] = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout, check=False,
+        ["git", *args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout, env=env, check=False,
     )
+
+
+class GpgExecutableNotFoundError(Exception):
+    """No usable gpg executable could be resolved.
+
+    Deliberately never falls back to whatever `gpg` happens to be first on
+    PATH: on Windows, that's frequently Git for Windows' bundled GPG (2.2.29
+    as of this writing), which can silently fail to read a keyring created by
+    a newer standalone GnuPG/Gpg4win install - it reports "No secret key" /
+    can't verify, not because the key is missing, but because it can't read
+    a newer keyring storage format. Presenting that as "no valid signature"
+    (fail closed, PENDING_APPROVAL) is correct; silently trying a different,
+    unconfigured gpg binary would not be.
+    """
+
+
+def resolve_gpg_executable(override: Optional[str] = None) -> Path:
+    """Resolve the gpg executable used for git signature verification.
+
+    Precedence: explicit override > GPG_EXECUTABLE env var > the standard
+    Gpg4win install location on Windows. Raises GpgExecutableNotFoundError
+    rather than falling back to an unconfigured `gpg` on PATH.
+    """
+    candidate = override or os.environ.get("GPG_EXECUTABLE")
+    if candidate:
+        path = Path(candidate)
+        if path.is_file():
+            return path
+        raise GpgExecutableNotFoundError(f"configured GPG executable not found: {path}")
+
+    if DEFAULT_WINDOWS_GPG_EXE.is_file():
+        return DEFAULT_WINDOWS_GPG_EXE
+
+    raise GpgExecutableNotFoundError(
+        f"no GPG executable configured and default not found at {DEFAULT_WINDOWS_GPG_EXE}; "
+        "set GPG_EXECUTABLE or pass an explicit override"
+    )
+
+
+def resolve_gpg_homedir(override: Optional[str] = None) -> Optional[Path]:
+    """Resolve GNUPGHOME for git signature verification, if any.
+
+    Precedence: explicit override > GNUPGHOME already set in this process'
+    environment > %APPDATA%\\gnupg (the standard per-user GnuPG/Gpg4win
+    homedir on Windows, resolved dynamically via the APPDATA env var - never
+    a hardcoded username/path). Returns None if nothing resolves, in which
+    case the resolved gpg executable's own default applies.
+    """
+    candidate = override or os.environ.get("GNUPGHOME")
+    if candidate:
+        return Path(candidate)
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidate_path = Path(appdata) / "gnupg"
+        if candidate_path.is_dir():
+            return candidate_path
+    return None
 
 
 def sync_remote_ref(
@@ -317,6 +383,8 @@ def get_commit_signature_info(
     repo_root: Path,
     commit_sha: str,
     run_git_fn: Callable[..., subprocess.CompletedProcess] = run_git,
+    gpg_executable_override: Optional[str] = None,
+    gpg_homedir_override: Optional[str] = None,
 ) -> tuple[bool, dict, str]:
     """Read a specific commit's GPG/SSH signature status via local git
     plumbing only (git log --format, already-fetched object - no network).
@@ -324,8 +392,25 @@ def get_commit_signature_info(
     keyring already has imported; an unsigned commit, a bad/expired/revoked
     signature, and a signature from an unknown key are all indistinguishable
     from "no valid signature" to the caller - see is_commit_authorized().
+
+    Explicitly resolves which gpg executable git uses for this check (see
+    resolve_gpg_executable) rather than trusting whatever `gpg` is first on
+    PATH, and fails closed - never attempts the check with an unconfigured
+    fallback binary - if no usable executable can be resolved.
     """
-    result = run_git_fn(["log", "-1", f"--format={GIT_SIGNATURE_FORMAT}", commit_sha], repo_root)
+    try:
+        gpg_exe = resolve_gpg_executable(gpg_executable_override)
+    except GpgExecutableNotFoundError as exc:
+        return False, {}, f"GPG executable not resolved: {exc}"
+
+    homedir = resolve_gpg_homedir(gpg_homedir_override)
+    env = None
+    if homedir is not None:
+        env = os.environ.copy()
+        env["GNUPGHOME"] = str(homedir)
+
+    args = ["-c", f"gpg.program={gpg_exe}", "log", "-1", f"--format={GIT_SIGNATURE_FORMAT}", commit_sha]
+    result = run_git_fn(args, repo_root, env=env)
     if result.returncode != 0 or not result.stdout.strip():
         return False, {}, f"could not read signature status for {commit_sha}: {result.stderr.strip()[:300]}"
     parts = result.stdout.rstrip("\n").split("\x1f")
@@ -457,6 +542,8 @@ def run_once(
     min_sync_interval: int = DEFAULT_MIN_SYNC_SECONDS,
     sync_fn: Callable[..., tuple] = sync_remote_ref,
     signature_fn: Callable[..., tuple] = get_commit_signature_info,
+    gpg_executable_override: Optional[str] = None,
+    gpg_homedir_override: Optional[str] = None,
 ) -> str:
     """Run a single poll cycle. Returns the resulting lifecycle state.
 
@@ -487,7 +574,11 @@ def run_once(
             write_status(state.get("last_task_id", "unknown"), "SYNC_FAILED", detail, status_path)
             return "SYNC_FAILED"
         task = info["task"]
-        sig_ok, sig_info, sig_detail = signature_fn(repo_root, info["commit_sha"])
+        sig_ok, sig_info, sig_detail = signature_fn(
+            repo_root, info["commit_sha"],
+            gpg_executable_override=gpg_executable_override,
+            gpg_homedir_override=gpg_homedir_override,
+        )
         if not sig_ok:
             authorized = False
             authorization_detail = f"commit {info['commit_sha'][:12]}: signature check failed ({sig_detail})"
@@ -644,6 +735,19 @@ def main(argv=None) -> int:
         default=DEFAULT_MIN_SYNC_SECONDS,
         help="Minimum seconds between git fetch calls in GitHub-sync mode (default: %(default)s)",
     )
+    parser.add_argument(
+        "--gpg-executable",
+        default=None,
+        help="Explicit path to the gpg executable used for commit signature verification "
+        "(overrides GPG_EXECUTABLE env var and the default Gpg4win location). "
+        "Never falls back to an unconfigured gpg on PATH - fails closed instead.",
+    )
+    parser.add_argument(
+        "--gpg-homedir",
+        default=None,
+        help="Explicit GNUPGHOME for commit signature verification (overrides the GNUPGHOME "
+        "env var and the default %%APPDATA%%\\gnupg).",
+    )
     args = parser.parse_args(argv)
 
     if args.update_integrity:
@@ -668,6 +772,8 @@ def main(argv=None) -> int:
             github_remote=args.github_remote,
             github_branch=args.github_branch,
             min_sync_interval=args.sync_interval,
+            gpg_executable_override=args.gpg_executable,
+            gpg_homedir_override=args.gpg_homedir,
         )
         print(state)
         return 0
@@ -694,6 +800,8 @@ def main(argv=None) -> int:
                 github_remote=args.github_remote,
                 github_branch=args.github_branch,
                 min_sync_interval=args.sync_interval,
+                gpg_executable_override=args.gpg_executable,
+                gpg_homedir_override=args.gpg_homedir,
             )
             time.sleep(args.interval)
     except KeyboardInterrupt:

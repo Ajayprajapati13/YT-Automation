@@ -9,10 +9,12 @@ Run with: python SUPERVISOR/worker/test_task_worker.py -v
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 import task_worker
 
@@ -28,7 +30,7 @@ def _fake_signature_fn(status="G", key=FAKE_TRUSTED_KEY_ID, signer="Test Signer 
     """A signature_fn stand-in for run_once()'s injectable seam - never
     invokes real git/gpg. Matches get_commit_signature_info()'s (ok, info,
     detail) contract exactly."""
-    def _fn(repo_root, commit_sha):
+    def _fn(repo_root, commit_sha, **kwargs):
         return True, {"sig_status": status, "signing_key": key, "signer_name": signer}, "ok"
     return _fn
 
@@ -71,6 +73,7 @@ class _GitFixture:
         self._git(["add", "SUPERVISOR/NEXT_TASK.md"], self.author_path)
         self._git(
             ["-c", f"user.email={author_email}", "-c", f"user.name={author_name}",
+             "-c", "commit.gpgsign=false",
              "commit", "--quiet", "-m", f"task {task_id} {status}"],
             self.author_path,
         )
@@ -559,13 +562,125 @@ class TrustedSignersTests(unittest.TestCase):
         self.assertEqual(keys, set())
 
 
+class ResolveGpgExecutableTests(unittest.TestCase):
+    """resolve_gpg_executable(): explicit override > GPG_EXECUTABLE env var >
+    default Gpg4win path. Never silently falls back to an unconfigured `gpg`
+    on PATH - missing/unresolvable always raises."""
+
+    def setUp(self):
+        self._env_patch = os.environ.get("GPG_EXECUTABLE")
+        os.environ.pop("GPG_EXECUTABLE", None)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        if self._env_patch is None:
+            os.environ.pop("GPG_EXECUTABLE", None)
+        else:
+            os.environ["GPG_EXECUTABLE"] = self._env_patch
+
+    def test_explicit_override_existing_file_is_used(self):
+        result = task_worker.resolve_gpg_executable(override=__file__)
+        self.assertEqual(result, Path(__file__))
+
+    def test_explicit_override_missing_file_raises(self):
+        with self.assertRaises(task_worker.GpgExecutableNotFoundError):
+            task_worker.resolve_gpg_executable(override="Z:/nope/gpg.exe")
+
+    def test_env_var_used_when_no_override(self):
+        os.environ["GPG_EXECUTABLE"] = __file__
+        result = task_worker.resolve_gpg_executable(override=None)
+        self.assertEqual(result, Path(__file__))
+
+    def test_override_takes_precedence_over_env_var(self):
+        os.environ["GPG_EXECUTABLE"] = "Z:/nope/gpg.exe"
+        result = task_worker.resolve_gpg_executable(override=__file__)
+        self.assertEqual(result, Path(__file__))
+
+    def test_no_override_no_env_no_default_fails_closed(self):
+        original = task_worker.DEFAULT_WINDOWS_GPG_EXE
+        task_worker.DEFAULT_WINDOWS_GPG_EXE = Path("Z:/definitely/not/a/real/path/gpg.exe")
+        try:
+            with self.assertRaises(task_worker.GpgExecutableNotFoundError):
+                task_worker.resolve_gpg_executable(override=None)
+        finally:
+            task_worker.DEFAULT_WINDOWS_GPG_EXE = original
+
+    def test_default_used_when_nothing_else_configured_and_default_exists(self):
+        original = task_worker.DEFAULT_WINDOWS_GPG_EXE
+        task_worker.DEFAULT_WINDOWS_GPG_EXE = Path(__file__)  # stand-in for "a real default exists"
+        try:
+            result = task_worker.resolve_gpg_executable(override=None)
+            self.assertEqual(result, Path(__file__))
+        finally:
+            task_worker.DEFAULT_WINDOWS_GPG_EXE = original
+
+
+class ResolveGpgHomedirTests(unittest.TestCase):
+    """resolve_gpg_homedir(): explicit override > GNUPGHOME env var >
+    %APPDATA%\\gnupg (dynamic, never a hardcoded username) > None."""
+
+    def setUp(self):
+        self._gnupghome_patch = os.environ.get("GNUPGHOME")
+        self._appdata_patch = os.environ.get("APPDATA")
+        os.environ.pop("GNUPGHOME", None)
+        os.environ.pop("APPDATA", None)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        for name, value in (("GNUPGHOME", self._gnupghome_patch), ("APPDATA", self._appdata_patch)):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def test_explicit_override_returned_as_is(self):
+        result = task_worker.resolve_gpg_homedir(override=r"C:\custom\gnupg")
+        self.assertEqual(result, Path(r"C:\custom\gnupg"))
+
+    def test_env_var_used_when_no_override(self):
+        os.environ["GNUPGHOME"] = r"C:\from\env\gnupg"
+        result = task_worker.resolve_gpg_homedir(override=None)
+        self.assertEqual(result, Path(r"C:\from\env\gnupg"))
+
+    def test_override_takes_precedence_over_env_var(self):
+        os.environ["GNUPGHOME"] = r"C:\from\env\gnupg"
+        result = task_worker.resolve_gpg_homedir(override=r"C:\explicit\gnupg")
+        self.assertEqual(result, Path(r"C:\explicit\gnupg"))
+
+    def test_appdata_default_used_when_directory_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gnupg_dir = Path(tmp) / "gnupg"
+            gnupg_dir.mkdir()
+            os.environ["APPDATA"] = tmp
+            result = task_worker.resolve_gpg_homedir(override=None)
+            self.assertEqual(result, gnupg_dir)
+
+    def test_appdata_default_ignored_when_directory_does_not_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APPDATA"] = tmp  # no "gnupg" subdirectory created
+            result = task_worker.resolve_gpg_homedir(override=None)
+            self.assertIsNone(result)
+
+    def test_nothing_configured_returns_none(self):
+        result = task_worker.resolve_gpg_homedir(override=None)
+        self.assertIsNone(result)
+
+
 class GetCommitSignatureInfoTests(unittest.TestCase):
     """Parses git's %G?/%GK/%GS format output. Uses a fake run_git_fn stub
     returning exactly what real git would print for each signature state -
-    no real git or gpg invocation needed to test the parsing itself."""
+    no real git or gpg invocation needed to test the parsing itself.
 
-    def _stub(self, stdout: str, returncode: int = 0):
-        def _fn(args, repo_root, timeout=None):
+    gpg_executable_override=__file__ everywhere: resolve_gpg_executable()
+    only needs *a* file to exist, not a real gpg binary, when the fake
+    run_git_fn never actually shells out - this keeps these tests portable
+    instead of implicitly depending on this one machine's GPG install path."""
+
+    def _stub(self, stdout: str, returncode: int = 0, capture: Optional[dict] = None):
+        def _fn(args, repo_root, timeout=None, env=None):
+            if capture is not None:
+                capture["args"] = args
+                capture["env"] = env
             return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout, stderr="")
         return _fn
 
@@ -573,6 +688,7 @@ class GetCommitSignatureInfoTests(unittest.TestCase):
         ok, info, _ = task_worker.get_commit_signature_info(
             Path("."), "deadbeef",
             run_git_fn=self._stub("G\x1fABCDEF0123456789\x1fTest Signer <trusted@example.com>\n"),
+            gpg_executable_override=__file__,
         )
         self.assertTrue(ok)
         self.assertEqual(info["sig_status"], "G")
@@ -580,7 +696,7 @@ class GetCommitSignatureInfoTests(unittest.TestCase):
 
     def test_unsigned_commit_parsed_as_n(self):
         ok, info, _ = task_worker.get_commit_signature_info(
-            Path("."), "deadbeef", run_git_fn=self._stub("N\x1f\x1f\n"),
+            Path("."), "deadbeef", run_git_fn=self._stub("N\x1f\x1f\n"), gpg_executable_override=__file__,
         )
         self.assertTrue(ok)
         self.assertEqual(info["sig_status"], "N")
@@ -588,7 +704,7 @@ class GetCommitSignatureInfoTests(unittest.TestCase):
 
     def test_git_command_failure_fails_safely(self):
         ok, info, detail = task_worker.get_commit_signature_info(
-            Path("."), "deadbeef", run_git_fn=self._stub("", returncode=128),
+            Path("."), "deadbeef", run_git_fn=self._stub("", returncode=128), gpg_executable_override=__file__,
         )
         self.assertFalse(ok)
         self.assertEqual(info, {})
@@ -596,10 +712,45 @@ class GetCommitSignatureInfoTests(unittest.TestCase):
 
     def test_unexpected_format_fails_safely(self):
         ok, info, detail = task_worker.get_commit_signature_info(
-            Path("."), "deadbeef", run_git_fn=self._stub("only one field\n"),
+            Path("."), "deadbeef", run_git_fn=self._stub("only one field\n"), gpg_executable_override=__file__,
         )
         self.assertFalse(ok)
         self.assertIn("unexpected", detail.lower())
+
+    def test_uses_explicitly_resolved_gpg_program_in_git_command(self):
+        capture = {}
+        ok, info, _ = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef",
+            run_git_fn=self._stub("G\x1fABCDEF0123456789\x1fTest Signer\n", capture=capture),
+            gpg_executable_override=__file__,
+        )
+        self.assertTrue(ok)
+        self.assertIn(f"gpg.program={__file__}", capture["args"])
+
+    def test_explicit_gnupghome_override_is_passed_to_git_subprocess_env(self):
+        capture = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, info, _ = task_worker.get_commit_signature_info(
+                Path("."), "deadbeef",
+                run_git_fn=self._stub("G\x1fABCDEF0123456789\x1fTest Signer\n", capture=capture),
+                gpg_executable_override=__file__,
+                gpg_homedir_override=tmp,
+            )
+            self.assertTrue(ok)
+            self.assertIsNotNone(capture["env"])
+            self.assertEqual(capture["env"]["GNUPGHOME"], tmp)
+
+    def test_missing_gpg_executable_fails_closed_without_calling_git(self):
+        def _must_not_be_called(args, repo_root, timeout=None, env=None):
+            raise AssertionError("run_git_fn must not be called when no GPG executable is resolved")
+
+        missing = str(Path(tempfile.gettempdir()) / "definitely-not-a-real-gpg.exe")
+        ok, info, detail = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef", run_git_fn=_must_not_be_called, gpg_executable_override=missing,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(info, {})
+        self.assertIn("GPG executable not resolved", detail)
 
 
 class IsCommitAuthorizedTests(unittest.TestCase):
@@ -744,6 +895,7 @@ class GitHubSyncTests(unittest.TestCase):
         task_worker.run_git(["add", "SUPERVISOR/NEXT_TASK.md"], self.fixture.author_path)
         task_worker.run_git(
             ["-c", "user.email=trusted@example.com", "-c", "user.name=Trusted",
+             "-c", "commit.gpgsign=false",
              "commit", "--quiet", "-m", "bad"],
             self.fixture.author_path,
         )
@@ -974,6 +1126,12 @@ class RunOnceGitHubModeSignatureTests(unittest.TestCase):
         result = self._run_once(
             launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
             claude_exe_override=__file__,
+            # __file__ as a stand-in gpg executable: an unsigned commit means
+            # git never actually execs gpg.program, so this only needs to be
+            # *a* file, not a real gpg binary - keeps this test's outcome
+            # independent of whether this machine has GnuPG installed at any
+            # particular path.
+            gpg_executable_override=__file__,
         )
         self.assertEqual(result, "PENDING_APPROVAL")
         self.assertEqual(calls, [], "a spoofable author email alone must never authorize a launch")
