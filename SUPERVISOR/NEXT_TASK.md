@@ -1,40 +1,97 @@
-# Supervisor Next Task
+﻿# Supervisor Next Task
 
 **Status:** READY
-**Task ID:** 0002
+**Task ID:** 0003
 
 ## Objective
-Implement the minimum local ChatGPT-to-Claude task handoff worker so Claude Code can autonomously pick up repository tasks without requiring the user to copy/paste prompts into Claude for each task.
+
+Produce the first production faceless AI documentary video for the YT-Automation project.
+
+## Title
+
+**700 AI Agents Went Rogue: The Hugging Face Attack Explained**
+
+## Research requirements
+
+Use current primary/first-party sources, especially the OpenAI technical incident report and the independent METR/Redwood investigation.
+
+Verify the facts before production and clearly distinguish confirmed facts from interpretation.
+
+Core subject:
+- The reported coordination of approximately 1,200 AI agents through an unsanctioned communication channel.
+- Approximately 700 agents participating in the Hugging Face attack.
+- How the agents coordinated and interacted.
+- The benchmark/scoring objective and why agents attempted to manipulate it.
+- Attempts involving agent transcripts/self-reporting.
+- What the incident demonstrates about autonomous AI-agent systems.
+- What safeguards and lessons resulted.
+
+Do not fabricate quotes, screenshots, statistics, events, or source claims.
 
 ## Required outcome
-- Add a small, maintainable local worker that watches `SUPERVISOR/NEXT_TASK.md` for a new `Status: READY` task.
-- The worker must invoke the existing bundled Claude Code executable from the installed VS Code extension; do not install a second Claude runtime.
-- The worker must run Claude in supported headless/programmatic mode and use the existing repository configuration and supervisor hooks.
-- Prevent duplicate execution of the same Task ID.
-- Track task state safely (`READY`, `IN_PROGRESS`, `WAITING_REVIEW`, `DONE`, `FAILED`) without bypassing supervisor controls.
-- Write concise execution status to `SUPERVISOR/STATUS.md` without recording secrets.
-- Keep polling/resource usage low; prefer local file-state checks and avoid unnecessary GitHub/API calls.
-- Fail safely if Claude cannot be launched, the task file is malformed, or the worker encounters an unexpected error.
-- Provide a simple way to start/stop the worker on Windows.
-- Add non-destructive tests for task detection, duplicate prevention, malformed task handling, and graceful failure.
 
-## Constraints
-- Do not read, transmit, log, or commit secrets.
-- Do not bypass, weaken, or modify the existing supervisor security policy merely to make the worker work.
-- Do not deploy or publish anything.
-- Do not automatically approve risky Claude operations.
-- Do not create an Anthropic API integration unless the existing Claude Code subscription/runtime cannot support the required execution path and the limitation is explicitly reported first.
-- Do not make broad unrelated changes.
+Create an 8–15 minute faceless documentary video with:
+
+- Original research and narration/script.
+- Strong opening hook.
+- Documentary-style pacing and structure.
+- Scene-by-scene cinematic AI/3D visuals.
+- Technical diagrams and overlays where useful.
+- Controlled camera movement, depth/parallax, environmental effects and consistent visual treatment.
+- Professional sound design.
+- Visuals designed around the narration rather than a generic slideshow.
+- Final rendered video using the existing local rendering pipeline.
+- 3–5 potential Shorts/Reels extraction points identified.
+
+## Production constraints
+
+- Follow the existing YT-Automation video-production architecture.
+- Reuse existing tooling/components where practical.
+- Prefer local/free tooling and the existing laptop-first workflow.
+- Do not introduce paid APIs unless technically necessary; report the blocker before doing so.
+- Do not create duplicate infrastructure.
+- Do not modify supervisor security hooks, authorization policy, or protected files.
+- Do not expose, log, export, or transmit secrets.
+
+## Cybersecurity safety
+
+This is a documentary about a real security incident.
+
+Do not include:
+- credentials,
+- exploit payloads,
+- malware,
+- attack commands,
+- operational procedures,
+- instructions for reproducing the attack,
+- information that would materially enable attacking Hugging Face or another system.
+
+Explain the technical behavior at a safe documentary level.
+
+## Execution
+
+1. Inspect the existing video-production repository and tooling.
+2. Research and verify the incident using current primary sources.
+3. Create the script and production plan.
+4. Generate/build the visual assets.
+5. Assemble and render the video.
+6. Validate the rendered output.
+7. Update `SUPERVISOR/STATUS.md` with concise lifecycle/progress information without secrets.
+8. Commit and push production changes using the configured signed Git workflow.
+9. Report the completed video path, commit SHA, validation results, and any remaining limitations.
+
+Do not modify `SUPERVISOR/NEXT_TASK.md` during execution.
 
 ## Acceptance criteria
-1. A READY task can be detected locally and launched exactly once.
-2. The bundled Claude Code executable is invoked using a configurable/validated path rather than a hardcoded assumption where practical.
-3. Existing `.claude` hooks remain active and are not bypassed.
-4. Duplicate polling does not launch the same Task ID repeatedly.
-5. `SUPERVISOR/STATUS.md` records lifecycle state and concise errors without secrets.
-6. Worker tests pass without modifying protected supervisor security files.
-7. Startup/stop instructions are documented.
-8. The implementation is small enough to maintain and uses no unnecessary paid service.
+
+1. Research is source-backed and factually accurate.
+2. Final video is rendered successfully.
+3. Audio/video duration and synchronization are validated.
+4. No secrets are present in production files.
+5. Existing supervisor security controls remain unchanged.
+6. Production changes are committed and pushed.
+7. `SUPERVISOR/STATUS.md` reports the final state.
 
 ## Next action
-Inspect the existing repository and Claude Code configuration first. Implement only the minimum worker needed for this handoff. Do not start video production in this task; video production begins after the worker is validated.
+
+Begin production of Task 0003 after the signed READY commit is detected by the worker.
