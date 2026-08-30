@@ -40,6 +40,7 @@ STATUS_PATH = REPO_ROOT / "SUPERVISOR" / "STATUS.md"
 STATE_PATH = WORKER_DIR / "state.json"
 INTEGRITY_PATH = WORKER_DIR / "integrity.json"
 AUTHORIZED_AUTHORS_PATH = WORKER_DIR / "authorized_authors.json"
+TRUSTED_SIGNERS_PATH = WORKER_DIR / "trusted_signers.json"
 LOG_PATH = REPO_ROOT / "logs" / "task_worker.log"
 
 DEFAULT_POLL_SECONDS = 60
@@ -204,10 +205,15 @@ def verify_hooks_configured(repo_root: Path = REPO_ROOT) -> tuple[bool, str]:
 # against an already-fetched remote-tracking ref) - never a working-tree
 # checkout, merge, or reset, so uncommitted local changes are never at risk.
 # A task is auto-launch-authorized only if the commit that most recently
-# touched NEXT_TASK.md on that ref was authored by an email present in
-# authorized_authors.json - an explicit, human-maintained allowlist that
-# ships empty. --approve-launch remains available as a manual override
-# alongside this, for tasks that aren't (yet) commit-authorized.
+# touched NEXT_TASK.md on that ref has ALL of: a cryptographically valid
+# signature, a signing key listed in trusted_signers.json, AND an author
+# email listed in authorized_authors.json (see is_commit_authorized()) -
+# both allowlists are explicit, human-maintained, and ship empty. A matching
+# author email by itself is never sufficient: that's plain commit metadata,
+# trivially spoofed via `git -c user.email=... commit`, which is exactly
+# what the signature requirement closes. --approve-launch remains available
+# as a manual override alongside this, for tasks that aren't (yet)
+# commit-authorized.
 
 def run_git(args: list, repo_root: Path, timeout: int = GIT_TIMEOUT_SECONDS) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -293,6 +299,90 @@ def is_author_authorized(author_email: str, authorized_emails: set) -> bool:
     return author_email.strip().lower() in authorized_emails
 
 
+# git log format placeholders: %G? = signature validity ("G" good, "U" good
+# but key ownertrust unknown, "B" bad, "X"/"Y" expired sig/key, "R" revoked,
+# "E" can't be checked e.g. missing pubkey, "N" no signature at all).
+# %GK = the key id used to sign. Field separator \x1f (ASCII unit separator)
+# to avoid collisions with commas/spaces in signer names.
+GIT_SIGNATURE_FORMAT = "%G?%x1f%GK%x1f%GS"
+
+# "G" and "U" both mean the cryptographic signature itself checks out - the
+# only difference is GPG's own web-of-trust ownertrust rating for the key,
+# which this worker doesn't use. Trust is instead an explicit, separate
+# decision: whether the signing key id is listed in trusted_signers.json.
+VALID_SIGNATURE_STATUSES = {"G", "U"}
+
+
+def get_commit_signature_info(
+    repo_root: Path,
+    commit_sha: str,
+    run_git_fn: Callable[..., subprocess.CompletedProcess] = run_git,
+) -> tuple[bool, dict, str]:
+    """Read a specific commit's GPG/SSH signature status via local git
+    plumbing only (git log --format, already-fetched object - no network).
+    Verification is against whatever public keys this machine's own GPG
+    keyring already has imported; an unsigned commit, a bad/expired/revoked
+    signature, and a signature from an unknown key are all indistinguishable
+    from "no valid signature" to the caller - see is_commit_authorized().
+    """
+    result = run_git_fn(["log", "-1", f"--format={GIT_SIGNATURE_FORMAT}", commit_sha], repo_root)
+    if result.returncode != 0 or not result.stdout.strip():
+        return False, {}, f"could not read signature status for {commit_sha}: {result.stderr.strip()[:300]}"
+    parts = result.stdout.rstrip("\n").split("\x1f")
+    if len(parts) != 3:
+        return False, {}, "unexpected git log signature output format"
+    sig_status, signing_key, signer_name = parts
+    return True, {"sig_status": sig_status, "signing_key": signing_key.strip(), "signer_name": signer_name}, "ok"
+
+
+def load_trusted_signers(path: Path = TRUSTED_SIGNERS_PATH) -> set:
+    """Empty by default (no signing key is trusted) until a human deliberately
+    adds one - see trusted_signers.json. Key ids are compared case-insensitively."""
+    if not path.exists():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    key_ids = data.get("trusted_key_ids", [])
+    if not isinstance(key_ids, list):
+        return set()
+    return {k.strip().upper() for k in key_ids if isinstance(k, str) and k.strip()}
+
+
+def is_commit_authorized(
+    author_email: str,
+    authorized_emails: set,
+    sig_info: dict,
+    trusted_key_ids: set,
+) -> tuple[bool, str]:
+    """The single source of truth for GitHub-sync autonomous-launch
+    authorization. Requires ALL of:
+      1. sig_info reports a cryptographically valid signature (see
+         VALID_SIGNATURE_STATUSES) - an unsigned, bad, expired, or revoked
+         commit is never authorized, no matter what its author email says.
+      2. the signing key id is explicitly listed in trusted_signers.json.
+      3. the author email is explicitly listed in authorized_authors.json.
+
+    A matching author email alone is never sufficient - that field is plain
+    commit metadata, trivially set to anything via `git -c user.email=...`,
+    which is exactly the spoofing gap this closes.
+    """
+    sig_status = sig_info.get("sig_status", "N")
+    signing_key = (sig_info.get("signing_key") or "").strip().upper()
+
+    if sig_status not in VALID_SIGNATURE_STATUSES:
+        return False, (
+            f"no valid commit signature (status={sig_status!r}); "
+            "author-email metadata alone is never sufficient for autonomous launch"
+        )
+    if not signing_key or signing_key not in trusted_key_ids:
+        return False, f"signature is valid but signing key {signing_key or '(none)'} is not in trusted_signers.json"
+    if not is_author_authorized(author_email, authorized_emails):
+        return False, f"signature and key are trusted, but author email is not in authorized_authors.json"
+    return True, f"verified signature by trusted key {signing_key}, author {author_email}"
+
+
 def _version_key(ext_dir: Path) -> tuple:
     match = re.search(r"anthropic\.claude-code-([\d.]+)-win32-x64$", ext_dir.name)
     if not match:
@@ -363,8 +453,10 @@ def run_once(
     github_remote: Optional[str] = None,
     github_branch: str = "main",
     authorized_authors_path: Path = AUTHORIZED_AUTHORS_PATH,
+    trusted_signers_path: Path = TRUSTED_SIGNERS_PATH,
     min_sync_interval: int = DEFAULT_MIN_SYNC_SECONDS,
     sync_fn: Callable[..., tuple] = sync_remote_ref,
+    signature_fn: Callable[..., tuple] = get_commit_signature_info,
 ) -> str:
     """Run a single poll cycle. Returns the resulting lifecycle state.
 
@@ -372,11 +464,13 @@ def run_once(
       - approve_launch=True: an explicit, one-off manual override (main()'s
         --approve-launch flag). Requires a human to act, every time.
       - github_remote set: the task is read from <github_remote>/<github_branch>
-        (never the local working-tree file, never a checkout/merge) and is
-        authorized only if the commit that last touched NEXT_TASK.md there was
-        authored by an email in authorized_authors.json - auditable (commit
-        SHA + author are logged) and doesn't require per-task human action,
-        but also isn't satisfied merely because a local file says READY.
+        (never the local working-tree file, never a checkout/merge). The
+        commit that last touched NEXT_TASK.md there must have a
+        cryptographically valid signature from a key in trusted_signers.json
+        AND an author email in authorized_authors.json (is_commit_authorized)
+        - auditable (commit SHA + signing key + author are logged) and
+        doesn't require per-task human action, but a spoofable author email
+        alone is never enough, and neither is a local file merely saying READY.
 
     Neither is the default: with neither set, a READY task is reported as
     PENDING_APPROVAL and nothing is ever launched.
@@ -393,13 +487,17 @@ def run_once(
             write_status(state.get("last_task_id", "unknown"), "SYNC_FAILED", detail, status_path)
             return "SYNC_FAILED"
         task = info["task"]
-        authorized_emails = load_authorized_authors(authorized_authors_path)
-        authorized = is_author_authorized(info["author_email"], authorized_emails)
-        authorization_detail = (
-            f"commit {info['commit_sha'][:12]} by {info['author_email']} on "
-            f"{github_remote}/{github_branch} "
-            f"({'authorized' if authorized else 'author not in authorized_authors.json'})"
-        )
+        sig_ok, sig_info, sig_detail = signature_fn(repo_root, info["commit_sha"])
+        if not sig_ok:
+            authorized = False
+            authorization_detail = f"commit {info['commit_sha'][:12]}: signature check failed ({sig_detail})"
+        else:
+            authorized_emails = load_authorized_authors(authorized_authors_path)
+            trusted_key_ids = load_trusted_signers(trusted_signers_path)
+            authorized, reason = is_commit_authorized(info["author_email"], authorized_emails, sig_info, trusted_key_ids)
+            authorization_detail = (
+                f"commit {info['commit_sha'][:12]} on {github_remote}/{github_branch}: {reason}"
+            )
     else:
         try:
             task = read_task(task_path)

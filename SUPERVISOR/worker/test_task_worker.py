@@ -21,6 +21,18 @@ def _fake_completed(returncode: int) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=["claude"], returncode=returncode, stdout="{}", stderr="")
 
 
+FAKE_TRUSTED_KEY_ID = "ABCDEF0123456789"
+
+
+def _fake_signature_fn(status="G", key=FAKE_TRUSTED_KEY_ID, signer="Test Signer <trusted@example.com>"):
+    """A signature_fn stand-in for run_once()'s injectable seam - never
+    invokes real git/gpg. Matches get_commit_signature_info()'s (ok, info,
+    detail) contract exactly."""
+    def _fn(repo_root, commit_sha):
+        return True, {"sig_status": status, "signing_key": key, "signer_name": signer}, "ok"
+    return _fn
+
+
 class _GitFixture:
     """A local bare repo standing in for GitHub, an 'author' clone that
     commits/pushes to it (standing in for ChatGPT/whoever authors tasks), and
@@ -523,6 +535,142 @@ class AuthorizedAuthorsTests(unittest.TestCase):
         self.assertEqual(emails, set())
 
 
+class TrustedSignersTests(unittest.TestCase):
+    """trusted_signers.json is empty by default: no signing key is trusted
+    until a human deliberately adds one."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "trusted_signers.json"
+
+    def test_missing_file_means_no_key_trusted(self):
+        keys = task_worker.load_trusted_signers(self.path)
+        self.assertEqual(keys, set())
+
+    def test_populated_file_matches_case_insensitively(self):
+        self.path.write_text(json.dumps({"trusted_key_ids": ["abcd1234"]}), encoding="utf-8")
+        keys = task_worker.load_trusted_signers(self.path)
+        self.assertIn("ABCD1234", keys)
+
+    def test_corrupt_file_fails_closed_to_no_key_trusted(self):
+        self.path.write_text("{not valid json", encoding="utf-8")
+        keys = task_worker.load_trusted_signers(self.path)
+        self.assertEqual(keys, set())
+
+
+class GetCommitSignatureInfoTests(unittest.TestCase):
+    """Parses git's %G?/%GK/%GS format output. Uses a fake run_git_fn stub
+    returning exactly what real git would print for each signature state -
+    no real git or gpg invocation needed to test the parsing itself."""
+
+    def _stub(self, stdout: str, returncode: int = 0):
+        def _fn(args, repo_root, timeout=None):
+            return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout, stderr="")
+        return _fn
+
+    def test_good_signature_parsed(self):
+        ok, info, _ = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef",
+            run_git_fn=self._stub("G\x1fABCDEF0123456789\x1fTest Signer <trusted@example.com>\n"),
+        )
+        self.assertTrue(ok)
+        self.assertEqual(info["sig_status"], "G")
+        self.assertEqual(info["signing_key"], "ABCDEF0123456789")
+
+    def test_unsigned_commit_parsed_as_n(self):
+        ok, info, _ = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef", run_git_fn=self._stub("N\x1f\x1f\n"),
+        )
+        self.assertTrue(ok)
+        self.assertEqual(info["sig_status"], "N")
+        self.assertEqual(info["signing_key"], "")
+
+    def test_git_command_failure_fails_safely(self):
+        ok, info, detail = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef", run_git_fn=self._stub("", returncode=128),
+        )
+        self.assertFalse(ok)
+        self.assertEqual(info, {})
+        self.assertTrue(detail)
+
+    def test_unexpected_format_fails_safely(self):
+        ok, info, detail = task_worker.get_commit_signature_info(
+            Path("."), "deadbeef", run_git_fn=self._stub("only one field\n"),
+        )
+        self.assertFalse(ok)
+        self.assertIn("unexpected", detail.lower())
+
+
+class IsCommitAuthorizedTests(unittest.TestCase):
+    """The core authorization decision, tested as pure logic against every
+    combination - no git/gpg involved. This is the truth table proving a
+    spoofable author email is never sufficient by itself."""
+
+    TRUSTED_EMAILS = {"trusted@example.com"}
+    TRUSTED_KEYS = {"ABCDEF0123456789"}
+
+    def _sig(self, status="G", key="ABCDEF0123456789"):
+        return {"sig_status": status, "signing_key": key, "signer_name": "Test Signer"}
+
+    def test_valid_signature_trusted_key_trusted_email_is_authorized(self):
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(), self.TRUSTED_KEYS,
+        )
+        self.assertTrue(ok, reason)
+
+    def test_no_signature_is_never_authorized_even_with_trusted_email(self):
+        # The critical case: spoofed/plain author-email metadata claiming to
+        # be the trusted author, but the commit isn't signed at all.
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(status="N", key=""), self.TRUSTED_KEYS,
+        )
+        self.assertFalse(ok)
+        self.assertIn("no valid commit signature", reason)
+
+    def test_bad_signature_is_never_authorized_even_with_trusted_email(self):
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(status="B"), self.TRUSTED_KEYS,
+        )
+        self.assertFalse(ok)
+
+    def test_expired_or_revoked_signature_is_never_authorized(self):
+        for status in ("X", "Y", "R", "E"):
+            ok, reason = task_worker.is_commit_authorized(
+                "trusted@example.com", self.TRUSTED_EMAILS, self._sig(status=status), self.TRUSTED_KEYS,
+            )
+            self.assertFalse(ok, f"status={status} must not be authorized")
+
+    def test_valid_signature_from_untrusted_key_is_not_authorized(self):
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(key="0000000000000000"), self.TRUSTED_KEYS,
+        )
+        self.assertFalse(ok)
+        self.assertIn("not in trusted_signers.json", reason)
+
+    def test_valid_trusted_signature_with_untrusted_email_is_not_authorized(self):
+        ok, reason = task_worker.is_commit_authorized(
+            "untrusted@example.com", self.TRUSTED_EMAILS, self._sig(), self.TRUSTED_KEYS,
+        )
+        self.assertFalse(ok)
+        self.assertIn("authorized_authors.json", reason)
+
+    def test_unknown_trust_status_u_is_accepted_when_key_and_email_trusted(self):
+        # "U" = cryptographically good signature, key ownertrust just isn't
+        # certified in GPG's own web-of-trust - which this design doesn't
+        # rely on (trusted_signers.json is the trust anchor instead).
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(status="U"), self.TRUSTED_KEYS,
+        )
+        self.assertTrue(ok, reason)
+
+    def test_empty_signing_key_is_never_authorized(self):
+        ok, reason = task_worker.is_commit_authorized(
+            "trusted@example.com", self.TRUSTED_EMAILS, self._sig(status="G", key=""), self.TRUSTED_KEYS,
+        )
+        self.assertFalse(ok)
+
+
 class GitHubSyncTests(unittest.TestCase):
     """sync_remote_ref() reads NEXT_TASK.md and its authoring commit from
     <remote>/<branch> via local git plumbing only - a bare repo on disk
@@ -623,6 +771,10 @@ class RunOnceGitHubModeTests(unittest.TestCase):
         self.status_path = self.fixture.local_path / "STATUS.md"
         self.log_path = self.fixture.local_path / "worker.log"
         self.authorized_authors_path = self.fixture.local_path / "authorized_authors.json"
+        self.trusted_signers_path = self.fixture.local_path / "trusted_signers.json"
+        self.trusted_signers_path.write_text(
+            json.dumps({"trusted_key_ids": [FAKE_TRUSTED_KEY_ID]}), encoding="utf-8"
+        )
 
     def _run_once(self, **overrides):
         kwargs = dict(
@@ -633,8 +785,15 @@ class RunOnceGitHubModeTests(unittest.TestCase):
             github_remote="origin",
             github_branch="main",
             authorized_authors_path=self.authorized_authors_path,
+            trusted_signers_path=self.trusted_signers_path,
             min_sync_interval=0,
             min_launch_interval=0,
+            # Tests in this class are about dedup/hooks/forbidden-flags/etc,
+            # not the signature mechanism itself (see
+            # RunOnceGitHubModeSignatureTests for that) - default to a
+            # signature that's already valid and from the pre-trusted key,
+            # so only the author-email allowlist varies per test as before.
+            signature_fn=_fake_signature_fn(),
         )
         kwargs.update(overrides)
         return task_worker.run_once(**kwargs)
@@ -761,6 +920,127 @@ class RunOnceGitHubModeTests(unittest.TestCase):
         combined = self.status_path.read_text(encoding="utf-8") + self.log_path.read_text(encoding="utf-8")
         for marker in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "sk-"):
             self.assertNotIn(marker, combined)
+
+
+class RunOnceGitHubModeSignatureTests(unittest.TestCase):
+    """End-to-end proof that GitHub-sync authorization requires a valid,
+    trusted commit signature - a matching author email alone (spoofable via
+    `git -c user.email=...`, as _GitFixture.commit_task itself does) is
+    never sufficient."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp_root = Path(self._tmp.name)
+        self.fixture = _GitFixture(self.tmp_root)
+        _write_valid_hooks_config(self.fixture.local_path)
+        self.state_path = self.fixture.local_path / "state.json"
+        self.status_path = self.fixture.local_path / "STATUS.md"
+        self.log_path = self.fixture.local_path / "worker.log"
+        self.authorized_authors_path = self.fixture.local_path / "authorized_authors.json"
+        self.trusted_signers_path = self.fixture.local_path / "trusted_signers.json"
+        # Both allowlists populated with the identity commit_task() uses -
+        # the only variable under test is the signature itself.
+        self.authorized_authors_path.write_text(
+            json.dumps({"authorized_emails": ["trusted@example.com"]}), encoding="utf-8"
+        )
+        self.trusted_signers_path.write_text(
+            json.dumps({"trusted_key_ids": [FAKE_TRUSTED_KEY_ID]}), encoding="utf-8"
+        )
+
+    def _run_once(self, **overrides):
+        kwargs = dict(
+            state_path=self.state_path,
+            status_path=self.status_path,
+            log_path=self.log_path,
+            repo_root=self.fixture.local_path,
+            github_remote="origin",
+            github_branch="main",
+            authorized_authors_path=self.authorized_authors_path,
+            trusted_signers_path=self.trusted_signers_path,
+            min_sync_interval=0,
+            min_launch_interval=0,
+        )
+        kwargs.update(overrides)
+        return task_worker.run_once(**kwargs)
+
+    def test_real_unsigned_commit_from_authorized_email_does_not_launch(self):
+        # _GitFixture.commit_task() creates a real, ordinary (unsigned)
+        # commit with an explicit -c user.email - exactly the spoofing this
+        # mechanism closes. No injected signature_fn here: this exercises
+        # the real get_commit_signature_info() against a real git repo.
+        self.fixture.commit_task("READY", "0002", "trusted@example.com")
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+        )
+        self.assertEqual(result, "PENDING_APPROVAL")
+        self.assertEqual(calls, [], "a spoofable author email alone must never authorize a launch")
+        self.assertIn("no valid commit signature", self.status_path.read_text(encoding="utf-8"))
+
+    def test_valid_signature_from_untrusted_key_does_not_launch(self):
+        self.fixture.commit_task("READY", "0002", "trusted@example.com")
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+            signature_fn=_fake_signature_fn(status="G", key="0000000000000000"),
+        )
+        self.assertEqual(result, "PENDING_APPROVAL")
+        self.assertEqual(calls, [])
+        self.assertIn("not in trusted_signers.json", self.status_path.read_text(encoding="utf-8"))
+
+    def test_bad_signature_from_trusted_key_does_not_launch(self):
+        self.fixture.commit_task("READY", "0002", "trusted@example.com")
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+            signature_fn=_fake_signature_fn(status="B"),
+        )
+        self.assertEqual(result, "PENDING_APPROVAL")
+        self.assertEqual(calls, [])
+
+    def test_valid_trusted_signature_from_untrusted_email_does_not_launch(self):
+        self.fixture.commit_task("READY", "0002", "someone-else@example.com")
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+            signature_fn=_fake_signature_fn(),  # valid, trusted key
+        )
+        self.assertEqual(result, "PENDING_APPROVAL")
+        self.assertEqual(calls, [])
+
+    def test_fully_verified_authorized_commit_launches_without_manual_approval(self):
+        self.fixture.commit_task("READY", "0002", "trusted@example.com")
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+            signature_fn=_fake_signature_fn(),  # valid signature, trusted key
+            # approve_launch intentionally omitted - verified signature +
+            # trusted key + authorized email must be sufficient on their own.
+        )
+        self.assertEqual(result, "WAITING_REVIEW")
+        self.assertEqual(len(calls), 1)
+        # STATUS.md is overwritten by the later WAITING_REVIEW write, so the
+        # IN_PROGRESS-time authorization detail is only preserved in the log.
+        self.assertIn("verified signature by trusted key", self.log_path.read_text(encoding="utf-8"))
+
+    def test_unverified_commit_can_still_be_manually_approved(self):
+        # The manual --approve-launch fallback must remain independent of
+        # the signature mechanism entirely.
+        self.fixture.commit_task("READY", "0002", "trusted@example.com")  # real, unsigned
+        calls = []
+        result = self._run_once(
+            launch_fn=lambda exe, cwd: calls.append(1) or _fake_completed(0),
+            claude_exe_override=__file__,
+            approve_launch=True,
+        )
+        self.assertEqual(result, "WAITING_REVIEW")
+        self.assertEqual(len(calls), 1)
 
 
 class ResolveClaudeExecutableTests(unittest.TestCase):

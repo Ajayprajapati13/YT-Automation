@@ -14,11 +14,15 @@ neither is on by default:
 2. **GitHub-sync mode** (`--github-remote`) - the task is read from
    `<remote>/<branch>` (never the local working-tree file) and is
    auto-authorized only if the commit that last touched `NEXT_TASK.md` there
-   was authored by an email listed in `authorized_authors.json` - an
-   explicit, human-maintained allowlist that ships empty. This is what makes
-   autonomous operation possible without per-task intervention, while still
-   requiring a real, auditable authorization event (a specific commit, by a
-   specific trusted identity) rather than trusting an arbitrary local file.
+   carries a **cryptographically valid signature from a key listed in
+   `trusted_signers.json`, AND** an author email listed in
+   `authorized_authors.json` - both explicit, human-maintained allowlists
+   that ship empty. A matching author email alone is never enough: that's
+   plain commit metadata, trivially spoofed via `git -c user.email=...`.
+   This is what makes autonomous operation possible without per-task
+   intervention, while still requiring a real, auditable, unforgeable
+   authorization event (a specific signed commit, from a specific trusted
+   key) rather than trusting an arbitrary local file or spoofable metadata.
 
 With neither set, a READY task is reported as `PENDING_APPROVAL` and the
 worker stops there.
@@ -119,34 +123,50 @@ present. `stop_worker.ps1` only ever stops the one PID it tracked itself.
 
 This is the mechanism that lets the worker run unattended without you having
 to approve every single task, while still refusing to launch anything just
-because a local file happens to say READY.
+because a local file (or an unsigned commit's plain-text metadata) happens to
+say READY.
 
-**Why not just remove the approval gate for GitHub-synced tasks?** Because
-"synced from GitHub" isn't the same as "authorized." Anyone with write access
-to the branch being synced could otherwise trigger an unattended Claude
-launch merely by pushing a commit that sets `**Status:** READY`. Instead:
+**Why not just trust the commit author email?** Because author-email commit
+metadata is trivially spoofed - `git -c user.email=anyone@example.com commit`
+sets it to whatever the committer wants, with no verification at all (this
+repo's own test suite does exactly that to build fixtures). Trusting it alone
+would mean anyone able to push a commit could impersonate a trusted identity.
+So author email is necessary but never sufficient - it's checked *together
+with* a cryptographic signature from an explicitly trusted key:
 
 1. `sync_remote_ref()` fetches `<remote>/<branch>` (rate-limited) and reads
-   `NEXT_TASK.md` from it via `git show` - never the working tree.
-2. It also runs `git log -1 -- SUPERVISOR/NEXT_TASK.md` against that ref to
-   get the **commit SHA, author email, author name, and commit date** of
-   whoever last touched that file there.
-3. `is_author_authorized()` checks that author email against
-   `authorized_authors.json` (case-insensitive). **This file ships empty** -
-   no one is authorized until a human deliberately adds a trusted email.
-   Find the right value with:
+   `NEXT_TASK.md` from it via `git show` - never the working tree. It also
+   gets the **commit SHA, author email, author name, and commit date** of
+   whoever last touched that file there (`git log`).
+2. `get_commit_signature_info()` reads that same commit's GPG/SSH signature
+   status via `git log --format=%G?/%GK/%GS` - local git plumbing against
+   the already-fetched commit object, no network. This reflects whatever
+   public keys are already imported into this machine's own GPG keyring.
+3. `is_commit_authorized()` requires **all three** of:
+   - a cryptographically valid signature (`%G?` is `G` or `U` - the
+     signature math checks out; `N`/unsigned, `B`/bad, `X`/`Y`/expired,
+     `R`/revoked, or `E`/unverifiable are all rejected)
+   - the signing key id (`%GK`) is listed in `trusted_signers.json`
+   - the author email is listed in `authorized_authors.json`
+
+   **Both allowlist files ship empty** - nothing is auto-trusted until a
+   human deliberately populates them. Find the values for a given commit
+   with:
    ```powershell
-   git log -1 --format=%ae -- SUPERVISOR/NEXT_TASK.md
+   git log -1 --format=%ae -- SUPERVISOR/NEXT_TASK.md   # author email
+   git log -1 --format=%GK -- SUPERVISOR/NEXT_TASK.md   # signing key id (once signed)
    ```
-4. Only if the author is in that list does the task auto-launch - and the
-   commit SHA + author + this reasoning are written into `STATUS.md` and the
+4. Only if all three hold does the task auto-launch - and the commit SHA +
+   signing key + author + this reasoning are written into `STATUS.md`/the
    log for every launch, so every autonomous launch has a specific,
-   auditable justification, not just "a file said READY."
-5. An unauthorized commit doesn't crash or silently do nothing - it's
-   reported as `PENDING_APPROVAL` with the specific reason (which commit,
-   which author, not in the list), and `--approve-launch` still works as a
-   manual override on top of it if you want to approve that specific case
-   anyway.
+   auditable justification, not just "a file said READY" or "the metadata
+   claimed to be someone trusted."
+5. An unauthorized (or unsigned, or wrongly-signed) commit doesn't crash or
+   silently do nothing - it's reported as `PENDING_APPROVAL` with the
+   specific reason (no signature / untrusted key / untrusted email), and
+   `--approve-launch` still works as a manual override on top of it,
+   entirely independent of the signature mechanism, if you want to approve
+   that specific case anyway.
 
 **What this does not change:** dedup by Task ID, the launch-rate limiter,
 `verify_hooks_configured()`, and `FORBIDDEN_FLAGS` all still apply
@@ -154,19 +174,28 @@ identically in GitHub-sync mode - authorization only decides *whether* a
 launch is allowed to be attempted, not whether the existing safety checks
 still run.
 
-**Populating `authorized_authors.json`:**
+**Populating the allowlists:**
 
 ```json
+// authorized_authors.json
 {
   "authorized_emails": ["ci-bot@example.com"]
+}
+
+// trusted_signers.json
+{
+  "trusted_key_ids": ["ABCDEF0123456789"]
 }
 ```
 
 Whatever identity actually authors the commits you want auto-trusted (a
-ChatGPT/automation integration's commit email, or your own) goes here. This
-file is not protected by `.claude/settings.json`'s deny-list, so treat adding
-an email to it as a real security decision, reviewed like any other change
-before it's committed.
+ChatGPT/automation integration's commit email and its signing key, or your
+own) goes here - and for signature verification to succeed at all, that
+key's **public** key needs to already be imported into this machine's GPG
+keyring (`gpg --import`). Neither file is protected by
+`.claude/settings.json`'s deny-list, so treat adding an entry to either as a
+real security decision, reviewed like any other change before it's
+committed.
 
 ## Integrity baseline (`integrity.json`)
 

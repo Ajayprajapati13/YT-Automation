@@ -1,0 +1,4 @@
+{
+  "_comment": "GPG key IDs whose commit signatures are trusted for autonomous launch authorization (see is_commit_authorized() in task_worker.py). A valid signature from one of these keys is REQUIRED in addition to authorized_authors.json - a matching author email alone is never sufficient, since that field is plain commit metadata, trivially spoofed via `git -c user.email=...`. Empty by default: no key is trusted until a human deliberately adds one, after importing its public key into this machine's own GPG keyring. Find a commit's signing key id with: git log -1 --format=%GK -- SUPERVISOR/NEXT_TASK.md",
+  "trusted_key_ids": []
+}
