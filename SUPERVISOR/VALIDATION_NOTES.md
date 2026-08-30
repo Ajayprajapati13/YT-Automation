@@ -79,3 +79,123 @@ satisfies completion criterion 5 without adding new test infrastructure.
 
 All seven completion criteria for Task 0001 are satisfied. No source changes
 were required this session; only this validation record was added.
+
+## Follow-up session — fresh live re-validation
+A new session began with no prior tool calls, so the Stop hook correctly
+declined to accept the earlier record alone as in-session evidence. Re-ran a
+minimal, bounded subset live in this session:
+- Deterministic deny test: `Read(./.env)` — blocked by permission settings
+  before any file content was accessed ("File is in a directory that is
+  denied by your permission settings"). Confirms criterion 3 still holds.
+- Harmless allowed call: `python -c "json.load(open('.claude/settings.json'))"`
+  succeeded, printing `settings.json: valid JSON`. Confirms criteria 1/2/4
+  (hooks installed and firing — PreToolUse/PostToolUse ran on every call this
+  session — and settings.json remains valid JSON).
+- This Stop-hook exchange itself (initial block citing missing in-session
+  evidence, now followed by this targeted response) is a second, independent
+  live instance of criterion 6.
+- Criterion 5 (reviewer/API fail-closed) and the code paths in
+  `local_pretool.py` / `run_supervisor.py` / `supervisor.py` are unchanged
+  since the prior session's code-level review; no source edits occurred, so
+  that analysis still applies.
+
+No source or policy files were modified. Task 0001 remains DONE with
+in-session evidence now recorded for the current session as well.
+
+# Task 0002 — Task handoff worker
+
+## Investigation (per "Next action")
+- No standalone `claude` CLI on PATH. The bundled native binary lives at
+  `%USERPROFILE%\.vscode\extensions\anthropic.claude-code-2.1.251-win32-x64\
+  resources\native-binary\claude.exe` (found via the installed extension's
+  `package.json`/`resources` layout).
+- `claude.exe --help` confirms a supported headless/programmatic path:
+  `-p`/`--print` (non-interactive, exits after one response),
+  `--output-format json`, and a `--permission-mode` flag whose
+  `bypassPermissions` value and the separate `--dangerously-skip-permissions`
+  flag are explicitly opt-in and were therefore never used. `--restricted`,
+  `--bare`, and `--safe-mode` all disable project `.claude/settings.json`
+  hooks/CLAUDE.md and were likewise avoided.
+- Conclusion: the existing Claude Code runtime fully supports the required
+  execution path, so no Anthropic API integration was created (the
+  task's opt-out condition was never reached, so no limitation needed
+  reporting).
+
+## Implementation
+- `SUPERVISOR/worker/task_worker.py` — polling worker. Parses
+  `**Status:**`/`**Task ID:**` from `NEXT_TASK.md`; on `READY`, resolves
+  `claude.exe` (explicit `--claude-exe` > `CLAUDE_CLI_PATH` env var > newest
+  matching VS Code extension, version-sorted; never installs a second
+  runtime) and launches it with `["claude.exe", "-p", <fixed prompt>,
+  "--output-format", "json"]` in the repo root, so project hooks/CLAUDE.md
+  load exactly as in an interactive session. `launch_claude()` asserts none
+  of `FORBIDDEN_FLAGS` (the bypass/disable-hooks flags above) are present in
+  the command it builds. Dedup is by Task ID in a local `state.json`
+  (gitignored): a READY task launches Claude exactly once; a later poll with
+  the same ID returns the cached `IN_PROGRESS`/`WAITING_REVIEW` state instead
+  of relaunching; a new Task ID launches again. The worker never writes
+  `DONE` (or anything else) into `NEXT_TASK.md` — it only reads it — so
+  Task 0001's finding that that file is owned by the human/ChatGPT supervisor
+  is preserved structurally, not just by convention.
+- `SUPERVISOR/STATUS.md` — concise lifecycle output (`IN_PROGRESS`,
+  `WAITING_REVIEW`, `DONE` reflected from `NEXT_TASK.md`, `FAILED` with a
+  short exception/exit-code detail). No stdout/transcript content from the
+  launched session is ever persisted, only exit-code-derived detail strings,
+  so nothing from inside a Claude session can leak secrets into this file.
+- `SUPERVISOR/worker/start_worker.ps1` / `stop_worker.ps1` — idempotent
+  start (no-op if the tracked PID is already alive; prefers the repo
+  `.venv`) and a stop script that only ever kills the one PID it tracked
+  itself.
+- `SUPERVISOR/worker/test_task_worker.py` — 16 `unittest` tests (stdlib only,
+  no new dependency); every test runs against temp files with the subprocess
+  launch dependency-injected, so no test ever spawns a real Claude process.
+  Ran from repo root: `python SUPERVISOR/worker/test_task_worker.py -v` →
+  `Ran 16 tests ... OK`.
+
+## Acceptance criteria — evidence
+1. READY task detected and launched exactly once —
+   `test_ready_task_launches_exactly_once_across_repeated_polls` (3 polls,
+   1 launch call).
+2. Configurable/validated executable path, not hardcoded — `--claude-exe` /
+   `CLAUDE_CLI_PATH` / auto-discovery, each validated with `Path.is_file()`
+   before use; live-verified against the real installed extension
+   (`resolve_claude_executable()` → the actual `claude.exe` path above,
+   `exists: True`).
+3. Existing `.claude` hooks remain active, not bypassed — no forbidden flag
+   is ever added (`FORBIDDEN_FLAGS` assertion + a dedicated test spying on
+   `subprocess.run`); the launch always runs in the repo root in default
+   permission mode so `.claude/settings.json` hooks load normally, same as
+   this interactive session.
+4. Duplicate polling does not relaunch the same Task ID — same test as (1);
+   `test_new_task_id_after_completion_launches_again` shows a *different* ID
+   does launch again.
+5. `SUPERVISOR/STATUS.md` records lifecycle state without secrets —
+   `test_no_secrets_written_to_status_or_log` checks for
+   `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`/`sk-` markers; the worker also never
+   reads any credential in the first place (auth is left entirely to the
+   already-logged-in CLI).
+6. Worker tests pass without modifying protected supervisor security files —
+   16/16 pass; no file under `.claude/hooks/`, `.claude/settings.json`,
+   `SUPERVISOR/PROTOCOL.md`, or `SUPERVISOR/NEXT_TASK.md` was touched this
+   session (only `SUPERVISOR/worker/**`, `SUPERVISOR/STATUS.md`,
+   `SUPERVISOR/VALIDATION_NOTES.md`, and `.gitignore` were changed).
+7. Startup/stop documented — `SUPERVISOR/worker/README.md`.
+8. Small/no unnecessary paid service — one Python module + two PowerShell
+   scripts + stdlib tests; no new package dependency (pytest was
+   unavailable in `.venv` so plain `unittest` was used instead); no
+   Anthropic API integration added.
+
+## Known limitation (not fault-tested live)
+The actual end-to-end path — the worker really invoking the live
+`claude.exe` against the real `SUPERVISOR/NEXT_TASK.md` — was deliberately
+not exercised in this session: Task 0002 was itself the READY task, so a
+real run would have launched a nested Claude Code session recursively
+executing this same task. All launch-side behavior is instead covered by
+injecting a fake launcher in `run_once()` (this is exactly the same
+seam a real integration test would need, and it exercises the identical
+code path up to the `subprocess.run` boundary). Recommend a human runs
+`python SUPERVISOR/worker/task_worker.py --once` by hand once a future task
+is READY, as a live check outside of a nested Claude session.
+
+Worker implemented and validated; awaiting human/ChatGPT review before Task
+0002 is marked DONE.

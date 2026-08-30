@@ -21,3 +21,7 @@ logs/
 # Environment / secrets
 .env
 *.env
+
+# Task handoff worker: local runtime state (machine-specific, not history)
+SUPERVISOR/worker/state.json
+SUPERVISOR/worker/worker.pid
