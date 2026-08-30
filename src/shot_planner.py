@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+import beat_authoring
+
 
 MIN_SHOT = 2.8
 MAX_SHOT = 5.0
@@ -266,3 +268,99 @@ def validate_visual_diversity(shots: list) -> list[dict]:
             })
 
     return warnings
+
+
+# ------------------------------------------------------------------
+# Generalized (auto) shot planning: this is the reusable path. Instead of
+# a hand-authored beats.json entry per scene (content/gpu_explainer_beats.json,
+# cpu_vs_gpu only), this takes ANY scene's real narration text plus a small
+# per-scene entity-data dict (content/gpu_scene_concepts.json) and derives
+# beats, strategies, and camera work automatically via beat_authoring - the
+# same segmentation/selection logic for every scene, no per-scene code.
+# ------------------------------------------------------------------
+
+CLOSING_REACTION_WEIGHT = 5
+
+
+def build_auto_shots(scene: dict, entities: dict, include_closing_reaction: bool = True) -> dict:
+    """scene: a timeline-computed scene dict with 'id', 'start', 'end',
+    'narration' (the real scene narration text, as loaded from
+    content/gpu_explainer_script.json - NOT re-synthesized; only used here
+    to derive beat text/strategy, same as build_beat_shots does for
+    hand-authored beats). entities: this scene's data dict from
+    content/gpu_scene_concepts.json.
+
+    Duration is proportioned by word count against the scene's real
+    measured narration duration - identical math to build_beat_shots,
+    just with the beat list and strategy assignment derived automatically
+    instead of hand-authored.
+    """
+    start, end = float(scene["start"]), float(scene["end"])
+    duration = end - start
+    if duration <= 0:
+        raise ValueError(f"invalid scene duration for {scene['id']}: {duration}")
+
+    beat_texts = beat_authoring.segment_narration_into_beats(scene["narration"])
+    if not beat_texts:
+        raise ValueError(f"no beats could be segmented from scene {scene['id']}'s narration")
+
+    n = len(beat_texts) + (1 if include_closing_reaction else 0)
+    weights = []
+    prior_strategy = None
+    beats = []
+    for i, text in enumerate(beat_texts):
+        position = "first" if i == 0 else ("last" if (i == len(beat_texts) - 1 and not include_closing_reaction) else "middle")
+        strategy = beat_authoring.select_visual_strategy(text, position, prior_strategy)
+        prior_strategy = strategy
+        camera = beat_authoring.select_camera_strategy(strategy, i)
+        beats.append({
+            "beat_id": f"beat_{i:02d}",
+            "text": text,
+            "visual_strategy": strategy,
+            "visual_id": f"{scene['id']}.auto.{i:02d}.{strategy}",
+            "animation_strategy": f"auto:{strategy}",
+            "camera_strategy": camera,
+            "character_pose": "explaining" if strategy in
+                ("diagram_build", "comparison", "character_interaction", "establishing_visual") else None,
+        })
+        weights.append(max(1, len(text.split())))
+
+    if include_closing_reaction:
+        strategy = "character_interaction" if prior_strategy != "character_interaction" else "transition_visual"
+        camera = beat_authoring.select_camera_strategy(strategy, len(beat_texts))
+        beats.append({
+            "beat_id": f"beat_{len(beat_texts):02d}_reaction",
+            "text": "",
+            "visual_strategy": strategy,
+            "visual_id": f"{scene['id']}.auto.{len(beat_texts):02d}.{strategy}",
+            "animation_strategy": f"auto:{strategy}",
+            "camera_strategy": camera,
+            "character_pose": "explaining",
+        })
+        weights.append(CLOSING_REACTION_WEIGHT)
+
+    total_weight = sum(weights)
+    shots = []
+    cursor = start
+    for i, (beat, weight) in enumerate(zip(beats, weights)):
+        is_last = i == len(beats) - 1
+        shot_end = end if is_last else cursor + duration * (weight / total_weight)
+        shots.append({
+            "shot_id": f"{scene['id']}.{beat['beat_id']}",
+            "scene_id": scene["id"],
+            "beat_id": beat["beat_id"],
+            "narration_text": beat["text"],
+            "visual_strategy": beat["visual_strategy"],
+            "visual_type": beat["visual_strategy"],
+            "visual_id": beat["visual_id"],
+            "animation_strategy": beat["animation_strategy"],
+            "camera_strategy": beat["camera_strategy"],
+            "character_pose": beat["character_pose"],
+            "entities": entities,
+            "start": round(cursor, 3),
+            "end": round(shot_end, 3),
+            "duration": round(shot_end - cursor, 3),
+        })
+        cursor = shot_end
+
+    return {"version": 1, "scene_id": scene["id"], "shots": shots}

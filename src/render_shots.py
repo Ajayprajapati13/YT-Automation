@@ -20,10 +20,28 @@ from typing import Callable
 
 import motion_graphics as mg
 import scene_engine as se
-from gpu_explainer_beats import BEAT_DIAGRAM_BUILDERS
+from gpu_explainer_beats import BEAT_DIAGRAM_BUILDERS, build_diagram_for_strategy
 from visual_identity import VisualIdentity, default_identity
 
 STAGE_BOX = (110, 140, 1830, 1010)
+
+
+def _resolve_draw_diagram(shot: dict, identity: VisualIdentity):
+    """Two dispatch paths: shots carrying 'entities' (shot_planner.build_auto_shots -
+    any scene, via the generic strategy library) resolve through
+    build_diagram_for_strategy(); shots without it (shot_planner.build_beat_shots -
+    today only cpu_vs_gpu's hand-authored beats) resolve through the
+    fixed, exact-visual_id-keyed BEAT_DIAGRAM_BUILDERS, unchanged."""
+    duration = shot["duration"]
+    if shot.get("entities") is not None:
+        return build_diagram_for_strategy(
+            shot["visual_strategy"], duration, shot["camera_strategy"], identity,
+            shot["entities"], shot.get("character_pose"),
+        )
+    builder = BEAT_DIAGRAM_BUILDERS.get(shot["visual_id"])
+    if builder is None:
+        raise KeyError(f"no diagram builder registered for visual_id={shot['visual_id']!r}")
+    return builder(duration, shot["camera_strategy"], identity)
 
 
 def probe_ok(ffprobe: Path, path: Path) -> tuple[bool, float | None]:
@@ -56,12 +74,8 @@ def shot_path(shot: dict, shot_dir: Path) -> Path:
 def render_shot(shot: dict, background, theme: dict, path: Path, ffmpeg: Path,
                  identity: VisualIdentity = None, crf: int = 16, preset: str = "medium") -> Path:
     identity = identity or default_identity(theme)
-    builder = BEAT_DIAGRAM_BUILDERS.get(shot["visual_id"])
-    if builder is None:
-        raise KeyError(f"no diagram builder registered for visual_id={shot['visual_id']!r}")
-
     duration = shot["duration"]
-    draw_diagram = builder(duration, shot["camera_strategy"], identity)
+    draw_diagram = _resolve_draw_diagram(shot, identity)
 
     scene = se.Scene(
         id=shot["shot_id"], title=shot["beat_id"], narration=shot["narration_text"],
