@@ -1,8 +1,8 @@
 """Shot-driven timeline planner for production video rendering.
 
 Creates a deterministic shot list before video rendering. The planner is
-intentionally independent of the rendering engine so the timeline can be
-reviewed/debugged as JSON before expensive frame rendering begins.
+independent of the rendering engine so the timeline can be reviewed/debugged
+as JSON before expensive frame rendering begins.
 """
 
 from __future__ import annotations
@@ -15,9 +15,6 @@ from typing import Iterable
 MIN_SHOT = 2.8
 MAX_SHOT = 5.0
 
-# Deliberately small motion vocabulary. The renderer maps these to camera
-# transforms; keeping the plan declarative makes it easy to replace the
-# renderer later with richer B-roll/AI-video assets.
 MOTION_CYCLE = (
     "push_in",
     "pan_right",
@@ -28,12 +25,6 @@ MOTION_CYCLE = (
 )
 
 
-def _shot_length(remaining: float) -> float:
-    if remaining <= MAX_SHOT:
-        return round(remaining, 3)
-    return MAX_SHOT
-
-
 def build_shot_plan(scenes: Iterable[dict]) -> dict:
     shots = []
     shot_index = 1
@@ -41,21 +32,26 @@ def build_shot_plan(scenes: Iterable[dict]) -> dict:
     for scene in scenes:
         start = float(scene["start"])
         end = float(scene["end"])
+        duration = end - start
+        if duration <= 0:
+            raise ValueError(f"Invalid scene duration for {scene['id']}: {duration}")
+
+        # Split each scene into near-even shots. This prevents a short final
+        # remainder from being merged into a shot that exceeds MAX_SHOT.
+        count = max(1, int((duration + MAX_SHOT - 1e-9) // MAX_SHOT))
+        if count > 1:
+            average = duration / count
+            if average < MIN_SHOT:
+                count = max(1, int(duration / MIN_SHOT + 0.5))
+                count = max(1, min(count, int(duration / MAX_SHOT + 0.999)))
+            average = duration / count
+        else:
+            average = duration
+
         cursor = start
-        local_index = 0
-
-        while cursor < end - 0.01:
-            remaining = end - cursor
-            duration = _shot_length(remaining)
-
-            # Avoid a tiny final shot by shortening the previous shot when
-            # possible. This keeps every shot meaningful.
-            if remaining < MIN_SHOT and shots:
-                previous = shots[-1]
-                previous["end"] = round(end, 3)
-                previous["duration"] = round(end - previous["start"], 3)
-                break
-
+        for local_index in range(count):
+            shot_end = end if local_index == count - 1 else start + average * (local_index + 1)
+            shot_duration = shot_end - cursor
             motion = MOTION_CYCLE[(shot_index - 1) % len(MOTION_CYCLE)]
             shots.append(
                 {
@@ -63,20 +59,18 @@ def build_shot_plan(scenes: Iterable[dict]) -> dict:
                     "scene_id": scene["id"],
                     "scene_title": " / ".join(scene["title_lines"]),
                     "start": round(cursor, 3),
-                    "end": round(min(end, cursor + duration), 3),
-                    "duration": round(duration, 3),
+                    "end": round(shot_end, 3),
+                    "duration": round(shot_duration, 3),
                     "motion": motion,
                     "visual_change_required": True,
                 }
             )
             shot_index += 1
-            local_index += 1
-            cursor += duration
+            cursor = shot_end
 
     if not shots:
         raise ValueError("Cannot build a shot plan from an empty timeline.")
 
-    # Hard validation: no shot may exceed the engagement ceiling.
     longest = max(s["duration"] for s in shots)
     if longest > MAX_SHOT + 0.001:
         raise ValueError(f"Shot duration exceeds {MAX_SHOT}s: {longest}s")
