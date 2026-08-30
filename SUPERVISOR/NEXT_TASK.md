@@ -1,34 +1,40 @@
 # Supervisor Next Task
 
-**Status:** DONE
-**Task ID:** 0001
+**Status:** READY
+**Task ID:** 0002
 
 ## Objective
-Implement and validate the Claude Code AI-supervisor control loop described in `SUPERVISOR/PROTOCOL.md`.
+Implement the minimum local ChatGPT-to-Claude task handoff worker so Claude Code can autonomously pick up repository tasks without requiring the user to copy/paste prompts into Claude for each task.
 
 ## Required outcome
-- Claude Code reads this file automatically at session start and when it is ready to stop.
-- Low-risk tool calls can be auto-approved after deterministic local checks and OpenAI review.
-- Dangerous or sensitive operations are blocked locally.
-- Ambiguous/high-impact operations remain human approval requests.
-- Post-tool results are reviewed and corrective feedback is returned to Claude when needed.
-- The Stop hook checks this task and prevents Claude from stopping while the task remains incomplete.
+- Add a small, maintainable local worker that watches `SUPERVISOR/NEXT_TASK.md` for a new `Status: READY` task.
+- The worker must invoke the existing bundled Claude Code executable from the installed VS Code extension; do not install a second Claude runtime.
+- The worker must run Claude in supported headless/programmatic mode and use the existing repository configuration and supervisor hooks.
+- Prevent duplicate execution of the same Task ID.
+- Track task state safely (`READY`, `IN_PROGRESS`, `WAITING_REVIEW`, `DONE`, `FAILED`) without bypassing supervisor controls.
+- Write concise execution status to `SUPERVISOR/STATUS.md` without recording secrets.
+- Keep polling/resource usage low; prefer local file-state checks and avoid unnecessary GitHub/API calls.
+- Fail safely if Claude cannot be launched, the task file is malformed, or the worker encounters an unexpected error.
+- Provide a simple way to start/stop the worker on Windows.
+- Add non-destructive tests for task detection, duplicate prevention, malformed task handling, and graceful failure.
 
 ## Constraints
-- Do not read, transmit, or commit secrets.
-- Do not use administrator/root privileges.
+- Do not read, transmit, log, or commit secrets.
+- Do not bypass, weaken, or modify the existing supervisor security policy merely to make the worker work.
 - Do not deploy or publish anything.
-- Do not modify the supervisor security files except as explicitly required by this task.
-- Validate with harmless/read-only tests before any real automation work.
+- Do not automatically approve risky Claude operations.
+- Do not create an Anthropic API integration unless the existing Claude Code subscription/runtime cannot support the required execution path and the limitation is explicitly reported first.
+- Do not make broad unrelated changes.
 
-## Completion criteria
-1. Supervisor hooks are installed in the working tree.
-2. Settings are valid JSON and hooks execute successfully.
-3. Deterministic deny tests pass.
-4. A harmless tool call can be reviewed successfully.
-5. Reviewer failure falls back to manual approval/stop rather than auto-allow.
-6. A Stop hook can detect this task and continue Claude when work remains.
-7. A concise supervisor summary is generated after validation.
+## Acceptance criteria
+1. A READY task can be detected locally and launched exactly once.
+2. The bundled Claude Code executable is invoked using a configurable/validated path rather than a hardcoded assumption where practical.
+3. Existing `.claude` hooks remain active and are not bypassed.
+4. Duplicate polling does not launch the same Task ID repeatedly.
+5. `SUPERVISOR/STATUS.md` records lifecycle state and concise errors without secrets.
+6. Worker tests pass without modifying protected supervisor security files.
+7. Startup/stop instructions are documented.
+8. The implementation is small enough to maintain and uses no unnecessary paid service.
 
 ## Next action
-Inspect the repository and existing Claude Code configuration first. Do not make broad unrelated changes. Report any prerequisite or security issue before implementing it.
+Inspect the existing repository and Claude Code configuration first. Implement only the minimum worker needed for this handoff. Do not start video production in this task; video production begins after the worker is validated.
