@@ -1,0 +1,4 @@
+{
+  "_comment": "Emails of git commit authors trusted to author a READY task on the synced branch (see --github-remote in task_worker.py). This is checked TOGETHER WITH trusted_signers.json, not instead of it - a matching email here is necessary but not sufficient by itself, since author-email metadata is trivially spoofed via `git -c user.email=...`; the commit must also carry a cryptographically valid signature from a key listed in trusted_signers.json. Empty by default: no one is auto-authorized until a human deliberately adds an email here. Find the actual authoring email of a commit with: git log -1 --format=%ae -- SUPERVISOR/NEXT_TASK.md",
+  "authorized_emails": ["191996119+Ajayprajapati13@users.noreply.github.com"]
+}
