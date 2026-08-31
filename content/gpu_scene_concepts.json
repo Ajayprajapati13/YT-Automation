@@ -1,0 +1,58 @@
+{
+  "_comment": "Lightweight per-scene DATA (entity labels/grid sizes/closing lines) for the generic, parameterized visual-strategy builders in gpu_explainer_beats.py. This is what makes the architecture reusable: adding a scene means adding entries here, not writing a new diagram function. Beat segmentation and visual-strategy selection themselves are scene-agnostic (src/beat_authoring.py) and read no scene-specific logic at all.",
+  "scenes": {
+    "hook": {
+      "title": "AI LOOKS SIMPLE. IT ISN'T.",
+      "entity_a": "AI MODEL", "entity_a_grid": [3, 3],
+      "closing_statement": "IT ALL RUNS ON HARDWARE."
+    },
+    "why_gpus": {
+      "title": "WHY GPUS MATTER",
+      "entity_a": "AI MODEL", "entity_a_grid": [5, 7],
+      "entity_a_sublabel": "MASSIVE PARALLEL MATH",
+      "flow_caption": "MANY OPERATIONS AT ONCE",
+      "closing_statement": "THAT'S WHY GPUS FIT."
+    },
+    "parallelism": {
+      "title": "MASSIVE PARALLELISM",
+      "entity_a": "TASK", "entity_a_grid": [1, 1],
+      "entity_b": "GPU CORES", "entity_b_grid": [4, 8],
+      "comparison_marker": "SPLIT INTO",
+      "stat_number": "1000s", "stat_label": "OF PIECES AT ONCE",
+      "flow_caption": "EVERY CORE WORKING TOGETHER",
+      "closing_statement": "ALL AT ONCE, NOT ONE AT A TIME."
+    },
+    "memory_bandwidth": {
+      "title": "MEMORY + BANDWIDTH",
+      "entity_a": "COMPUTE CORES", "entity_a_grid": [4, 8],
+      "entity_b": "MEMORY", "entity_b_grid": [1, 1],
+      "flow_caption": "DATA MOVING CONSTANTLY",
+      "closing_statement": "MEMORY SPEED MATTERS TOO."
+    },
+    "clusters": {
+      "title": "GPU CLUSTERS",
+      "entity_a": "GPU", "entity_a_grid": [4, 4],
+      "entity_a_sublabel": "ONE OF MANY, CONNECTED",
+      "closing_statement": "NOT ONE GPU. MANY, TOGETHER."
+    },
+    "inference_scale": {
+      "title": "SERVING MILLIONS OF REQUESTS",
+      "entity_a": "USERS", "entity_a_grid": [1, 1],
+      "entity_b": "AI MODEL", "entity_b_grid": [3, 3],
+      "stat_number": "MILLIONS", "stat_label": "OF REQUESTS AT ONCE",
+      "flow_caption": "REQUESTS ARRIVING CONSTANTLY",
+      "closing_statement": "CAPACITY HAS TO KEEP UP."
+    },
+    "real_cost": {
+      "title": "THE REAL COST",
+      "entity_a": "HARDWARE", "entity_a_grid": [1, 1],
+      "entity_b": "ELECTRICITY", "entity_b_grid": [1, 1],
+      "closing_statement": "SCALE IS EXPENSIVE."
+    },
+    "takeaway": {
+      "title": "AI NEEDS MASSIVE PARALLEL COMPUTING",
+      "closing_statement": "THAT'S THE REAL STORY.",
+      "include_character": true
+    }
+  }
+}

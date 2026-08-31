@@ -1,0 +1,69 @@
+{
+  "_comment": "Beat definitions for shot-driven rendering (docs/pipeline_architecture_audit_2026-08-31.md). Beats are authored from the actual scene narration text, split at natural clause boundaries - NOT a mathematical time division. Each beat's rendered duration is derived by weighting its own word count (or an explicit weight_words for silent reaction beats) against the scene's real measured narration duration (see shot_planner.build_beat_shots), so timing stays anchored to the existing TTS/duration architecture instead of a fixed guess.",
+  "scenes": {
+    "cpu_vs_gpu": [
+      {
+        "beat_id": "setup",
+        "text": "That is where GPUs have an advantage.",
+        "visual_strategy": "establishing_visual",
+        "visual_type": "title_card",
+        "visual_id": "cpu_vs_gpu.establishing",
+        "animation_strategy": "kinetic_text_wipe",
+        "camera_strategy": {"kind": "pull_out", "anchor": [960, 500], "scale_from": 1.05, "scale_to": 1.0},
+        "character_pose": "thinking"
+      },
+      {
+        "beat_id": "cpu_reveal",
+        "text": "Unlike a traditional CPU, which handles a smaller number of complex tasks very efficiently,",
+        "visual_strategy": "diagram_build",
+        "visual_type": "diagram",
+        "visual_id": "cpu_vs_gpu.cpu_build",
+        "animation_strategy": "staggered_grid_build",
+        "camera_strategy": {"kind": "push_in", "anchor": [430, 560], "scale_from": 1.0, "scale_to": 1.08},
+        "character_pose": "explaining"
+      },
+      {
+        "beat_id": "gpu_reveal",
+        "text": "a GPU is built with many processing cores",
+        "visual_strategy": "comparison",
+        "visual_type": "diagram",
+        "visual_id": "cpu_vs_gpu.gpu_build_compare",
+        "animation_strategy": "staggered_grid_build_plus_vs_marker",
+        "camera_strategy": {"kind": "pull_out", "anchor": [755, 560], "scale_from": 1.1, "scale_to": 1.0},
+        "character_pose": "explaining"
+      },
+      {
+        "beat_id": "core_stat",
+        "text": "",
+        "weight_words": 5,
+        "visual_strategy": "stat_callout",
+        "visual_type": "stat",
+        "visual_id": "cpu_vs_gpu.core_count_stat",
+        "animation_strategy": "stat_reveal_scale_in",
+        "camera_strategy": {"kind": "static", "anchor": [960, 540], "scale_from": 1.0, "scale_to": 1.0},
+        "character_pose": null
+      },
+      {
+        "beat_id": "gpu_parallel_flow",
+        "text": "that work on large numbers of calculations at the same time.",
+        "visual_strategy": "data_flow",
+        "visual_type": "data_flow",
+        "visual_id": "cpu_vs_gpu.core_data_flow",
+        "animation_strategy": "traveling_dots_burst",
+        "camera_strategy": {"kind": "push_in", "anchor": [1080, 560], "scale_from": 1.0, "scale_to": 1.15},
+        "character_pose": null
+      },
+      {
+        "beat_id": "reaction",
+        "text": "",
+        "weight_words": 5,
+        "visual_strategy": "character_interaction",
+        "visual_type": "character_closeup",
+        "visual_id": "cpu_vs_gpu.explaining_reaction",
+        "animation_strategy": "hand_connector_confirm",
+        "camera_strategy": {"kind": "static", "anchor": [1500, 700], "scale_from": 1.0, "scale_to": 1.0},
+        "character_pose": "explaining"
+      }
+    ]
+  }
+}
